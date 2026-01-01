@@ -1,3 +1,24 @@
+build
+release*
+tsan*
+asan*
+__pycache__
+.idea
+perf.data*
+cmake-build-*
+.submit-repo/
+CMakeSettings.json
+CppProperties.json
+.vs/
+build_asan
+.DS_Store
+.cache/
+*.pdf
+compile_commands.json
+.clangd
+
+
+
 # Prerequisites
 *.d
 
