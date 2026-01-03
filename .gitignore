@@ -16,6 +16,10 @@ build_asan
 *.pdf
 compile_commands.json
 .clangd
+test_csv
+test.csv
+test_csv2
+test_main.cpp
 
 
 
