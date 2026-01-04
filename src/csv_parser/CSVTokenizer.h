@@ -8,7 +8,7 @@
 
 #include <fstream>
 
-#include "object.h"
+#include "../object.h"
 
 class CSVTokenizer {
 public:
@@ -26,13 +26,9 @@ public:
 
     bool IsEOF() const;
 
-    void ResetLineFlag() {
-        end_of_line_ = false;
-    }
+    void ResetLineFlag();
 
-    bool InHeader() const {
-        return in_header_;
-    }
+    bool InHeader() const;
 
 private:
     std::ifstream file_;

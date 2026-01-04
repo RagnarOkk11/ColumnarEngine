@@ -19,7 +19,9 @@ public:
 
     CSVParser &operator=(const CSVParser &other) = delete;
 
-    std::pair<std::vector<std::string>, std::vector<std::unique_ptr<Column>>> Read();
+    std::pair<std::vector<std::string>, std::vector<std::unique_ptr<Column>>> CreateColumnStructure();
+
+    bool ReadNextBatch(std::vector<std::unique_ptr<Column>> &columns, size_t batch_size = 10000);
 
 private:
     CSVTokenizer tokenizer_;

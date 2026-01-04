@@ -152,3 +152,11 @@ bool CSVTokenizer::IsEndOfLine() const {
 bool CSVTokenizer::IsEOF() const {
     return eof_reached_;
 }
+
+void CSVTokenizer::ResetLineFlag() {
+    end_of_line_ = false;
+}
+
+bool CSVTokenizer::InHeader() const {
+    return in_header_;
+}
