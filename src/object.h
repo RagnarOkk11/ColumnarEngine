@@ -34,9 +34,9 @@ public:
 
     virtual size_t Size() const = 0;
 
-    virtual void Add(const std::string &value) = 0;
+    virtual void Add(const std::string& value) = 0;
 
-    virtual uint64_t WriteToFile(std::ofstream &file) = 0;
+    virtual uint64_t WriteToFile(std::ofstream& file) = 0;
 
     virtual void ReadFromRawData(const std::vector<char>& buffer) = 0;
 
@@ -53,13 +53,13 @@ public:
         return data_.size();
     }
 
-    void Add(const std::string &value) override {
+    void Add(const std::string& value) override {
         data_.push_back(std::stoi(value));
     }
 
-    uint64_t WriteToFile(std::ofstream &file) override {
-        for (const auto &val: data_) {
-            file.write(reinterpret_cast<const char *>(&val), sizeof(val));
+    uint64_t WriteToFile(std::ofstream& file) override {
+        for (const auto& val : data_) {
+            file.write(reinterpret_cast<const char*>(&val), sizeof(val));
         }
         return data_.size() * sizeof(int32_t);
     }
@@ -88,13 +88,13 @@ public:
         return data_.size();
     }
 
-    void Add(const std::string &value) override {
+    void Add(const std::string& value) override {
         data_.push_back(std::stof(value));
     }
 
-    uint64_t WriteToFile(std::ofstream &file) override {
-        for (const auto &val: data_) {
-            file.write(reinterpret_cast<const char *>(&val), sizeof(val));
+    uint64_t WriteToFile(std::ofstream& file) override {
+        for (const auto& val : data_) {
+            file.write(reinterpret_cast<const char*>(&val), sizeof(val));
         }
         return data_.size() * sizeof(float);
     }
@@ -123,15 +123,15 @@ public:
         return data_.size();
     }
 
-    void Add(const std::string &value) override {
+    void Add(const std::string& value) override {
         data_.push_back(value);
     }
 
-    uint64_t WriteToFile(std::ofstream &file) override {
+    uint64_t WriteToFile(std::ofstream& file) override {
         uint64_t total_size = 0;
-        for (const auto &str: data_) {
+        for (const auto& str : data_) {
             uint32_t length = str.size();
-            file.write(reinterpret_cast<const char *>(&length), sizeof(length));
+            file.write(reinterpret_cast<const char*>(&length), sizeof(length));
             file.write(str.data(), length);
             total_size += sizeof(length) + length;
         }
@@ -169,11 +169,11 @@ public:
         return data_.size();
     }
 
-    void Add([[maybe_unused]] const std::string &value) override {
+    void Add([[maybe_unused]] const std::string& value) override {
         // TODO
     }
 
-    uint64_t WriteToFile([[maybe_unused]] std::ofstream &file) override {
+    uint64_t WriteToFile([[maybe_unused]] std::ofstream& file) override {
         // TODO
         return 0;
     }
@@ -201,11 +201,11 @@ public:
         return data_.size();
     }
 
-    void Add([[maybe_unused]] const std::string &value) override {
+    void Add([[maybe_unused]] const std::string& value) override {
         // TODO
     }
 
-    uint64_t WriteToFile([[maybe_unused]] std::ofstream &file) override {
+    uint64_t WriteToFile([[maybe_unused]] std::ofstream& file) override {
         // TODO
         return 0;
     }
@@ -223,4 +223,4 @@ private:
     // TODO: Implement timestamp-specific methods and storage
 };
 
-#endif //COLUMNAR_ENGINE_OBJECT_H
+#endif  // COLUMNAR_ENGINE_OBJECT_H
