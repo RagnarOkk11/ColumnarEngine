@@ -1,12 +1,29 @@
-add_executable(columnar-engine
-        main.cpp)
-
 add_library(project_includes INTERFACE)
 target_include_directories(project_includes INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/csv_parser
-    ${CMAKE_CURRENT_SOURCE_DIR}/reader
-    ${CMAKE_CURRENT_SOURCE_DIR}/writer)
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/csv_parser
+        ${CMAKE_CURRENT_SOURCE_DIR}/reader
+        ${CMAKE_CURRENT_SOURCE_DIR}/writer
+        ${CMAKE_CURRENT_SOURCE_DIR}/operators)
+
+add_executable(columnar-engine
+        main.cpp
+        csv_parser/CSVTokenizer.cpp
+        csv_parser/CSVTokenizer.h
+        reader/reader.cpp
+        reader/reader.h
+        object.h
+        csv_parser/RawCSVReader.cpp
+        csv_parser/RawCSVReader.h
+        writer/ColumnarWriter.cpp
+        writer/ColumnarWriter.h
+        writer/CSVToColumnar.cpp
+        writer/CSVToColumnar.h
+        operators/operators_base.h
+        engine.cpp
+        engine.h
+        codec/codec.h
+)
 
 target_link_libraries(columnar-engine PRIVATE project_includes)
 
@@ -20,7 +37,8 @@ add_executable(test_csv_parser
         writer/ColumnarWriter.cpp
         writer/ColumnarWriter.h
         writer/CSVToColumnar.cpp
-        writer/CSVToColumnar.h)
+        writer/CSVToColumnar.h
+        operators/operators_base.h)
 
 target_link_libraries(test_csv_parser PRIVATE
         contrib_catch_main

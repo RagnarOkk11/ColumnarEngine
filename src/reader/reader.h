@@ -22,6 +22,8 @@ public:
 
     const std::vector<ColumnMetadata>& GetMetadata() const;
 
+    ColumnType GetColumnTypeByName(const std::string& name) const;
+
 private:
     std::ifstream file_;
     std::vector<ColumnMetadata> metadata_;

@@ -38,6 +38,8 @@ public:
 
     virtual uint64_t WriteToFile(std::ofstream& file) = 0;
 
+    virtual std::string GetDataAsString(size_t index) const = 0;
+
     virtual void ReadFromRawData(const std::vector<char>& buffer) = 0;
 
     virtual void Clear() = 0;
@@ -57,11 +59,19 @@ public:
         data_.push_back(std::stoi(value));
     }
 
+    // TODO: add decoding logic
     uint64_t WriteToFile(std::ofstream& file) override {
         for (const auto& val : data_) {
             file.write(reinterpret_cast<const char*>(&val), sizeof(val));
         }
         return data_.size() * sizeof(int32_t);
+    }
+
+    std::string GetDataAsString(size_t index) const override {
+        if (index >= data_.size()) {
+            throw std::out_of_range("Index out of range");
+        }
+        return std::to_string(data_[index]);
     }
 
     void ReadFromRawData(const std::vector<char>& buffer) override {
@@ -72,6 +82,14 @@ public:
 
     void Clear() override {
         data_.clear();
+    }
+
+    void Add(int32_t value) {
+        data_.push_back(value);
+    }
+
+    const std::vector<int32_t>& GetData() const {
+        return data_;
     }
 
 private:
@@ -99,6 +117,13 @@ public:
         return data_.size() * sizeof(float);
     }
 
+    std::string GetDataAsString(size_t index) const override {
+        if (index >= data_.size()) {
+            throw std::out_of_range("Index out of range");
+        }
+        return std::to_string(data_[index]);
+    }
+
     void ReadFromRawData(const std::vector<char>& buffer) override {
         size_t num_floats = buffer.size() / sizeof(float);
         data_.resize(num_floats);
@@ -107,6 +132,14 @@ public:
 
     void Clear() override {
         data_.clear();
+    }
+
+    void Add(float value) {
+        data_.push_back(value);
+    }
+
+    const std::vector<float>& GetData() const {
+        return data_;
     }
 
 private:
@@ -138,6 +171,13 @@ public:
         return total_size;
     }
 
+    std::string GetDataAsString(size_t index) const override {
+        if (index >= data_.size()) {
+            throw std::out_of_range("Index out of range");
+        }
+        return data_[index];
+    }
+
     void ReadFromRawData(const std::vector<char>& buffer) override {
         data_.clear();
         size_t offset = 0;
@@ -153,6 +193,14 @@ public:
 
     void Clear() override {
         data_.clear();
+    }
+
+    void AddString(const std::string& value) {
+        data_.push_back(value);
+    }
+
+    const std::vector<std::string>& GetData() const {
+        return data_;
     }
 
 private:
@@ -176,6 +224,13 @@ public:
     uint64_t WriteToFile([[maybe_unused]] std::ofstream& file) override {
         // TODO
         return 0;
+    }
+
+    std::string GetDataAsString(size_t index) const override {
+        if (index >= data_.size()) {
+            throw std::out_of_range("Index out of range");
+        }
+        return data_[index];
     }
 
     void ReadFromRawData([[maybe_unused]] const std::vector<char>& buffer) override {
@@ -208,6 +263,13 @@ public:
     uint64_t WriteToFile([[maybe_unused]] std::ofstream& file) override {
         // TODO
         return 0;
+    }
+
+    std::string GetDataAsString(size_t index) const override {
+        if (index >= data_.size()) {
+            throw std::out_of_range("Index out of range");
+        }
+        return data_[index];
     }
 
     void ReadFromRawData([[maybe_unused]] const std::vector<char>& buffer) override {
