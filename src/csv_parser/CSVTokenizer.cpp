@@ -63,6 +63,7 @@ std::string CSVTokenizer::GetNextToken() {
     }
     if (file_.eof()) {
         eof_reached_ = true;
+        end_of_line_ = true;
     }
     return token;
 }

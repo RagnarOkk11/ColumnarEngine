@@ -92,3 +92,12 @@ std::unique_ptr<Column> Reader::GetColumnData(size_t column_index, size_t chunk_
 const std::vector<ColumnMetadata>& Reader::GetMetadata() const {
     return metadata_;
 }
+
+ColumnType Reader::GetColumnTypeByName(const std::string& name) const {
+    for (const auto& meta : metadata_) {
+        if (meta.name == name) {
+            return meta.type;
+        }
+    }
+    throw std::runtime_error("Column " + name + " not found in metadata");
+}
