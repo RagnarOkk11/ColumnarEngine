@@ -17,18 +17,18 @@ ColumnarWriter::~ColumnarWriter() {
     }
 }
 
-void ColumnarWriter::WriteHeader(const std::vector<std::string>& column_names,
+void ColumnarWriter::WriteHeader(const VectorOfStrings2D& column_names,
                                  const std::vector<ColumnType>& column_types) {
     if (header_written_) {
         throw std::runtime_error("Header already written");
     }
 
-    file_.write("MYPAR1", 6);
-    current_offset_ = 6;
+    file_.write("TUFF", 4);
+    current_offset_ = 4;
 
-    for (size_t i = 0; i < column_names.size(); ++i) {
+    for (size_t i = 0; i < column_names.Size(); ++i) {
         ColumnMetadata column_meta;
-        column_meta.name = column_names[i];
+        column_meta.name = column_names.GetString(i);
         column_meta.type = column_types[i];
         metadata_.push_back(column_meta);
     }
@@ -84,5 +84,5 @@ void ColumnarWriter::Finalize() {
     file_.write(reinterpret_cast<const char*>(&num_rows_), sizeof(num_rows_));
 
     file_.write(reinterpret_cast<const char*>(&metadata_start), sizeof(metadata_start));
-    file_.write("MYPAR1", 6);
+    file_.write("TUFF", 4);
 }

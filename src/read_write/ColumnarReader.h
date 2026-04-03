@@ -9,12 +9,12 @@
 #include <fstream>
 #include <memory>
 
-#include "object.h"
+#include "Types.h"
 
-class Reader {
+class ColumnarReader {
 public:
-    Reader(const std::string& file_name);
-    ~Reader();
+    ColumnarReader(const std::string& file_name);
+    ~ColumnarReader();
 
     std::vector<char> GetRawColumnData(size_t column_index, size_t chunk_index);
 

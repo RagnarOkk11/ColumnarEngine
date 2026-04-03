@@ -6,16 +6,16 @@
 #define COLUMNAR_ENGINE_RAWCSVREADER_H
 
 #include "CSVTokenizer.h"
+#include "VectorOfStrings.h"
 
 #include <vector>
 
-class RawCSVReader {
+class CSVReader {
 public:
-    RawCSVReader(const std::string& file_path, char delim = ',');
+    CSVReader(const std::string& file_path, char delim = ',');
 
-    std::vector<std::string> ReadHeader();
-
-    bool ReadRow(std::vector<std::string>& row);
+    void ReadHeader(VectorOfStrings2D& header);
+    bool ReadRow(VectorOfStrings2D& row);
 
 private:
     CSVTokenizer tokenizer_;

@@ -8,14 +8,14 @@
 #include <fstream>
 #include <memory>
 
-#include "object.h"
+#include "Types.h"
 
 class ColumnarWriter {
 public:
     ColumnarWriter(const std::string& file_path);
     ~ColumnarWriter();
 
-    void WriteHeader(const std::vector<std::string>& column_names,
+    void WriteHeader(const VectorOfStrings2D& column_names,
                      const std::vector<ColumnType>& column_types);
     void WriteBatch(const std::vector<std::unique_ptr<Column>>& columns);
 
