@@ -1,44 +1,54 @@
-// Всем привет, сегодня мы будем... вам показывать... короче идите ...спать)
-// "Не судите строго, это мое первое задержание..."
-// Я честно делал все сам, особенно тесты, и тем более следующие строчки (до отступа)
-// Copyright 2024 Your Name
-// Вообще я хотел написать на Rust, но потом подумал, что C++ это тоже неплохо
-// И вообще я люблю C++, особенно современные стандарты
-// Ну и конечно же я использовал C++20, потому что это круто (на самом деле С++23)
+#include "CSVToColumnar.h"
+#include "ExecutionAPI.h"
 
-// Эта штука умеет пока что инициализировать данные из CSV файла и выполнять простой запрос, где sum
-// и count считается для колонки с названием "prices", затем все это выводится в консоль
+#include <chrono>
 
-#include <iostream>
+class Query {
+public:
+    Query(std::string columnar_file_path) : columnar_file_path_(std::move(columnar_file_path)) {
+    }
 
-#include "engine.h"
+    // SELECT COUNT(*) FROM hits;
+    void Query0() {
+        auto df = DataFrame::Select(columnar_file_path_, {})
+                      .Aggregate({}, {Count()})
+                      .Collect();
+
+        df.Display();
+    }
+
+private:
+    std::string columnar_file_path_;
+};
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cout << "Usage: " << argv[0]
-                  << " <1: init_data | 2: execute_query> <csv_file_path | columnar_file_path> "
-                     "<columnar_file_path | ->"
-                  << std::endl;
+    if (argc < 4) {
+        std::cout << "Usage " << argv[0] << ": " << "<csv_file_path> <columnar_file_path> <schema_file_path>\n";
         return 1;
     }
-    Engine engine;
-    int mode = std::stoi(argv[1]);
-    if (mode == 1) {
-        if (argc < 4) {
-            std::cout << "Usage: " << argv[0]
-                      << " <1: init_data | 2: execute_query> <csv_file_path | columnar_file_path> "
-                         "<columnar_file_path | ->"
-                      << std::endl;
-        }
-        std::string csv_file_path = argv[2];
-        std::string columnar_file_path = argv[3];
-        engine.InitDataFromCSV(csv_file_path, columnar_file_path);
-    } else if (mode == 2) {
-        std::string columnar_file_path = argv[2];
-        engine.ExecuteQuery1(columnar_file_path);
-    } else {
-        std::cout << "Invalid mode. Use 1 for init_data or 2 for execute_query." << std::endl;
+    try {
+        std::cout << "Converting CSV to columnar format...\n";
+        const auto start = std::chrono::steady_clock::now();
+        CSVToColumnar converter;
+        converter.ConvertWithSchema(argv[1], argv[2], argv[3]);
+        const auto time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "Conversion completed in " << time << " seconds\n";
+
+    } catch (std::exception& e) {
+        std::cout << "Convert fail: " << e.what() << '\n';
+        return 1;
     }
 
-    return 0;
+    try {
+        std::cout << "Running...\n";
+        const auto start = std::chrono::steady_clock::now();
+        Query query(argv[2]);
+        query.Query0();
+        const auto time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "Query 1 completed in " << time << " seconds\n";
+    } catch (std::exception& e) {
+        std::cout << "Query fail: " << e.what() << '\n';
+        return 1;
+    }
+
 }

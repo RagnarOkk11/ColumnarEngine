@@ -4,13 +4,13 @@ project(columnar-engine)
 
 option(ENABLE_SEMINARS OFF)
 
-set(CMAKE_MODULE_PATH              "${CMAKE_SOURCE_DIR}/cmake")
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-set(CMAKE_EXPORT_COMPILE_COMMANDS  ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror -g -fno-omit-frame-pointer -fno-optimize-sibling-calls")
 
 include(cmake/BuildFlags.cmake)
 include(cmake/TestSolution.cmake)
