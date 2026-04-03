@@ -11,6 +11,13 @@ CSVTokenizer::CSVTokenizer(const std::string& file_path, char delim)
     if (!file_.is_open()) {
         THROW_RUNTIME_ERROR("Could not open CSV file");
     }
+    is_special_[static_cast<unsigned char>(delim_)] = true;
+    is_special_[static_cast<unsigned char>('\n')] = true;
+    is_special_[static_cast<unsigned char>('"')] = true;
+
+    is_whitespace_[static_cast<unsigned char>(' ')] = true;
+    is_whitespace_[static_cast<unsigned char>('\t')] = true;
+    is_whitespace_[static_cast<unsigned char>('\r')] = true;
 }
 
 bool CSVTokenizer::RefillBuffer(char& ch) {
@@ -41,11 +48,6 @@ void CSVTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
         }
     };
 
-    bool is_special[256] = {false};
-    is_special[static_cast<unsigned char>(delim_)] = true;
-    is_special[static_cast<unsigned char>('\n')] = true;
-    is_special[static_cast<unsigned char>('"')] = true;
-
     while (true) {
         if (buffer_pos_ >= buffer_end_) [[unlikely]] {
             char tmp;
@@ -64,7 +66,7 @@ void CSVTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
 
             size_t start = buffer_pos_;
             while (buffer_pos_ < buffer_end_) {
-                if (is_special[static_cast<unsigned char>(buffer_[buffer_pos_])]) {
+                if (is_special_[static_cast<unsigned char>(buffer_[buffer_pos_])]) {
                     break;
                 }
                 ++buffer_pos_;
@@ -95,7 +97,7 @@ void CSVTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
         if (ch == '"' && in_quotes) {
             in_quotes = false;
             while (GetChar(ch) && ch != delim_ && ch != '\n') {
-                if (ch != ' ' && ch != '\t' && ch != '\r') {
+                if (!is_whitespace_[static_cast<unsigned char>(ch)]) {
                     THROW_RUNTIME_ERROR(
                         "Invalid CSV format: unexpected character after closing quote");
                 }
@@ -114,9 +116,7 @@ void CSVTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
         if (!in_quotes && (ch == delim_ || ch == '\n')) {
             start_token_if_needed();
             while (!vector_of_strings.EmptyLastString() &&
-                   (vector_of_strings.BackLastString() == ' ' ||
-                    vector_of_strings.BackLastString() == '\t' ||
-                    vector_of_strings.BackLastString() == '\r')) {
+                   is_whitespace_[static_cast<unsigned char>(vector_of_strings.BackLastString())]) {
                 vector_of_strings.PopLastChar();
             }
             vector_of_strings.EndAddString();
@@ -139,9 +139,8 @@ void CSVTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
         return;
     }
 
-    while (!vector_of_strings.EmptyLastString() && (vector_of_strings.BackLastString() == ' ' ||
-                                                    vector_of_strings.BackLastString() == '\t' ||
-                                                    vector_of_strings.BackLastString() == '\r')) {
+    while (!vector_of_strings.EmptyLastString() &&
+           is_whitespace_[static_cast<unsigned char>(vector_of_strings.BackLastString())]) {
         vector_of_strings.PopLastChar();
     }
     end_of_line_ = true;

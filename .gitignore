@@ -22,7 +22,7 @@ test_csv2
 test_main.cpp
 hits_sample.csv
 columnar_hits_sample.tuff
-
+report.txt
 
 
 # Prerequisites

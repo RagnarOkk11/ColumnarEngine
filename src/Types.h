@@ -44,7 +44,8 @@ public:
     virtual ~Column() = default;
     virtual ColumnType GetType() const = 0;
     virtual size_t Size() const = 0;
-    virtual void Reserve([[maybe_unused]] size_t rows) {}
+    virtual void Reserve([[maybe_unused]] size_t rows) {
+    }
     virtual void Add(const std::string& value) = 0;
     virtual void AddView(std::string_view value) = 0;
     virtual void AddBatch(const VectorOfStrings2D& batch, size_t j) = 0;
@@ -335,7 +336,8 @@ public:
             size_t start = offsets_[i];
             size_t end = offsets_[i + 1];
             uint32_t length = end - start;
-            buffer.insert(buffer.end(), reinterpret_cast<const char*>(&length), reinterpret_cast<const char*>(&length) + sizeof(length));
+            buffer.insert(buffer.end(), reinterpret_cast<const char*>(&length),
+                          reinterpret_cast<const char*>(&length) + sizeof(length));
             if (length > 0) {
                 buffer.insert(buffer.end(), data_.begin() + start, data_.begin() + end);
             }
@@ -378,7 +380,6 @@ public:
         offsets_.push_back(data_.size());
     }
 
-
 private:
     std::vector<char> data_;
     std::vector<size_t> offsets_;
@@ -402,7 +403,8 @@ public:
         // TODO
     }
 
-    void AddBatch([[maybe_unused]] const VectorOfStrings2D& batch, [[maybe_unused]] size_t j) override {
+    void AddBatch([[maybe_unused]] const VectorOfStrings2D& batch,
+                  [[maybe_unused]] size_t j) override {
         // TODO
     }
 
@@ -449,7 +451,8 @@ public:
         // TODO
     }
 
-    void AddBatch([[maybe_unused]] const VectorOfStrings2D& batch, [[maybe_unused]] size_t j) override {
+    void AddBatch([[maybe_unused]] const VectorOfStrings2D& batch,
+                  [[maybe_unused]] size_t j) override {
         // TODO
     }
 
