@@ -24,6 +24,8 @@ public:
 private:
     static constexpr size_t kBufferSize = 1 << 20;
 
+    bool is_special_[256] = {false};
+    bool is_whitespace_[256] = {false};
     std::ifstream file_;
     std::vector<char> buffer_;
     size_t buffer_pos_ = 0;
@@ -31,10 +33,6 @@ private:
     char delim_;
     bool end_of_line_ = false;
     bool eof_reached_ = false;
-
-    bool is_special_[256] = {false};
-    bool is_whitespace_[256] = {false};
-
     bool GetChar(char& ch) {
         if (buffer_pos_ >= buffer_end_) [[unlikely]] {
             return RefillBuffer(ch);
