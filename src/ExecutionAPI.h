@@ -5,8 +5,9 @@
 #ifndef COLUMNAR_ENGINE_EXECUTIONAPI_H
 #define COLUMNAR_ENGINE_EXECUTIONAPI_H
 
+#include "AggregationExpressions.h"
 #include "ExecutionLogic.h"
-#include "Expressions.h"
+#include "FilterExpressions.h"
 
 #include <iostream>
 
@@ -66,12 +67,19 @@ public:
     }
 
     DataFrame Aggregate(std::vector<std::string> group_by_columns,
-                        std::vector<std::shared_ptr<Expression>> aggregate_expressions) {
+                        std::vector<std::shared_ptr<AggregateExpression>> aggregate_expressions) {
         auto aggregate_node = std::make_shared<AggregateNode>();
         aggregate_node->child = logical_plan_;
         aggregate_node->group_by_columns = std::move(group_by_columns);
         aggregate_node->aggregate_expressions = std::move(aggregate_expressions);
         return DataFrame(aggregate_node);
+    }
+
+    DataFrame Filter(std::shared_ptr<FilterExpression> filter_expression) {
+        auto filter_node = std::make_shared<FilterNode>();
+        filter_node->child = logical_plan_;
+        filter_node->filter_expression = std::move(filter_expression);
+        return DataFrame(filter_node);
     }
 
     DataResult Collect() {

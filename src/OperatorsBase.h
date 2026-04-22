@@ -8,14 +8,16 @@
 #include <memory>
 #include <vector>
 
-#include "Types.h"
+#include "ColumnarReader.h"
 #include "macro.h"
-#include "read_write/ColumnarReader.h"
+#include "Types.h"
 
 class AggregationFunction;
+class FilterFunction;
 
 struct RecordBatch {
     size_t num_rows;
+    std::vector<uint32_t> selection_vector;
     std::vector<std::unique_ptr<Column>> columns;
 };
 
@@ -95,6 +97,18 @@ private:
     std::unique_ptr<Operator> child_;
     std::vector<std::unique_ptr<AggregationFunction>> aggregation_functions_;
     bool finished_ = false;
+};
+
+class FilterOperator : public Operator {
+public:
+    FilterOperator(std::unique_ptr<Operator> child,
+                   std::shared_ptr<FilterFunction> filter_function);
+
+    std::unique_ptr<RecordBatch> Run() override;
+
+private:
+    std::unique_ptr<Operator> child_;
+    std::shared_ptr<FilterFunction> filter_function_;
 };
 
 #endif  // COLUMNAR_ENGINE_OPERATORS_BASE_H

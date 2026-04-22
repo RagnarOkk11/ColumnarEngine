@@ -28,10 +28,12 @@ add_executable(columnar-engine
         Schema.h
         macro.h
         ExecutionAPI.h
-        Expressions.h
+        AggregationExpressions.h
         OperatorsBase.cpp
         VectorOfStrings.cpp
         VectorOfStrings.h
+        FilterExpressions.h
+        FilterFunctions.h
 )
 
 target_link_libraries(columnar-engine PRIVATE project_includes)

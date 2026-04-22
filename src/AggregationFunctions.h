@@ -5,9 +5,9 @@
 #ifndef COLUMNAR_ENGINE_AGGREGATIONFUNCTIONS_H
 #define COLUMNAR_ENGINE_AGGREGATIONFUNCTIONS_H
 
-#include <memory>
-
 #include "OperatorsBase.h"
+
+#include <memory>
 
 class AggregationFunction {
 public:
@@ -49,7 +49,7 @@ struct MaxOperation {
     }
 };
 
-// maybe redundant
+// OPTIMIZE: maybe redundant
 struct CountOperation {
     template <typename ResultType, typename ValueType>
     static inline void Apply(ResultType& result, const ValueType&) {
@@ -82,8 +82,22 @@ struct AggregationFunctionTraits<Int64Column> {
 };
 
 template <>
+struct AggregationFunctionTraits<Int128Column> {
+    using ValueType = __int128_t;
+    using StateType = __int128_t;
+    using ResultColumnType = Int128Column;
+};
+
+template <>
 struct AggregationFunctionTraits<FloatColumn> {
     using ValueType = float;
+    using StateType = double;
+    using ResultColumnType = DoubleColumn;
+};
+
+template <>
+struct AggregationFunctionTraits<DoubleColumn> {
+    using ValueType = double;
     using StateType = double;
     using ResultColumnType = DoubleColumn;
 };
@@ -99,16 +113,16 @@ public:
     }
 
     void Update(const RecordBatch& batch) override {
-#ifndef NDEBUG
-        auto* column = dynamic_cast<ColumnType*>(batch.columns[column_index_].get());
-        ASSERT(column != nullptr);
-#else
         auto* column = static_cast<ColumnType*>(batch.columns[column_index_].get());
-#endif
-
         const auto& data = column->GetData();
-        for (const auto& value : data) {
-            Operation::Apply(state_, value);
+        if (batch.selection_vector.empty()) {
+            for (const auto& value : data) {
+                Operation::Apply(state_, value);
+            }
+        } else {
+            for (uint32_t ind : batch.selection_vector) {
+                Operation::Apply(state_, data[ind]);
+            }
         }
     }
 
@@ -131,5 +145,45 @@ using MaxAggregationFunction = TypedAggregationFunction<ColumnType, MaxOperation
 
 template <typename ColumnType>
 using CountAggregationFunction = TypedAggregationFunction<ColumnType, CountOperation>;
+
+template <typename ColumnType>
+class AvgAggregationFunction : public AggregationFunction {
+public:
+    using StateType = typename AggregationFunctionTraits<ColumnType>::StateType;
+
+    explicit AvgAggregationFunction(size_t column_index) : column_index_(column_index) {
+    }
+
+    void Update(const RecordBatch& batch) override {
+        auto* column = static_cast<ColumnType*>(batch.columns[column_index_].get());
+        const auto& data = column->GetData();
+        if (batch.selection_vector.empty()) {
+            for (const auto& value : data) {
+                sum_ += static_cast<StateType>(value);
+                ++count_;
+            }
+        } else {
+            for (uint32_t ind : batch.selection_vector) {
+                sum_ += static_cast<StateType>(data[ind]);
+                ++count_;
+            }
+        }
+    }
+
+    std::unique_ptr<Column> Finalize() override {
+        auto result_column = std::make_unique<DoubleColumn>();
+        if (count_ == 0) {
+            result_column->Add(0.0);
+        } else {
+            result_column->Add(static_cast<long double>(sum_) / count_);
+        }
+        return result_column;
+    }
+
+private:
+    size_t column_index_;
+    StateType sum_ = 0;
+    int64_t count_ = 0;
+};
 
 #endif  // COLUMNAR_ENGINE_AGGREGATIONFUNCTIONS_H

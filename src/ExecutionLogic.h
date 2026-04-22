@@ -5,15 +5,19 @@
 #ifndef COLUMNAR_ENGINE_LOGIC_H
 #define COLUMNAR_ENGINE_LOGIC_H
 
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "AggregationFunctions.h"
-#include "Expressions.h"
+#include "AggregationExpressions.h"
+#include "FilterFunctions.h"
+#include "FilterExpressions.h"
 #include "OperatorsBase.h"
 #include "Schema.h"
 #include "macro.h"
+
+#include <algorithm>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 struct PlanNode {
     virtual ~PlanNode() = default;
@@ -27,7 +31,12 @@ struct ScanNode : public PlanNode {
 struct AggregateNode : public PlanNode {
     std::shared_ptr<PlanNode> child;
     std::vector<std::string> group_by_columns;
-    std::vector<std::shared_ptr<Expression>> aggregate_expressions;
+    std::vector<std::shared_ptr<AggregateExpression>> aggregate_expressions;
+};
+
+struct FilterNode : public PlanNode {
+    std::shared_ptr<PlanNode> child;
+    std::shared_ptr<FilterExpression> filter_expression;
 };
 
 struct PhysicalOperatorContext {
@@ -35,31 +44,44 @@ struct PhysicalOperatorContext {
     Schema schema;
 };
 
-inline PhysicalOperatorContext BuildPhysicalPlan(const std::shared_ptr<PlanNode>& plan_node) {
+inline PhysicalOperatorContext BuildPhysicalPlan(
+    const std::shared_ptr<PlanNode>& plan_node,
+    std::optional<std::vector<std::string>> required_columns = std::nullopt) {
     if (auto scan = std::dynamic_pointer_cast<ScanNode>(plan_node)) {
-        auto op = std::make_unique<ScanOperator>(scan->table_path, scan->column_names);
+        std::vector<std::string> final_columns;
 
         Schema full_schema = Schema::FromColumnarFile(scan->table_path);
         const std::vector<Field>& full_columns = full_schema.GetFields();
 
-        Schema output_schema;
-        if (scan->column_names.empty()) {
-            for (const Field& field : full_columns) {
-                output_schema.AddField({field.name, field.type});
+        if (required_columns.has_value()) {
+            final_columns = required_columns.value();
+            if (final_columns.empty() && !full_columns.empty()) {
+                final_columns.push_back(full_columns[0].name);
             }
         } else {
-            for (const std::string& name : scan->column_names) {
-                bool found = false;
-                for (const Field& field : full_columns) { // TODO: optimize maybe
-                    if (field.name == name) {
-                        output_schema.AddField({field.name, field.type});
-                        found = true;
-                        break;
-                    }
+            if (scan->column_names.empty()) {
+                for (const Field& field : full_columns) {
+                    final_columns.push_back(field.name);
                 }
-                if (!found) {
-                    THROW_RUNTIME_ERROR("Column " + name + " not found in table schema");
+            } else {
+                final_columns = scan->column_names;
+            }
+        }
+
+        auto op = std::make_unique<ScanOperator>(scan->table_path, final_columns);
+
+        Schema output_schema;
+        for (const std::string& name : final_columns) {
+            bool found = false;
+            for (const Field& field : full_columns) {
+                if (field.name == name) {
+                    output_schema.AddField({field.name, field.type});
+                    found = true;
+                    break;
                 }
+            }
+            if (!found) [[unlikely]] {
+                THROW_RUNTIME_ERROR("Column " + name + " not found in table schema");
             }
         }
 
@@ -71,45 +93,39 @@ inline PhysicalOperatorContext BuildPhysicalPlan(const std::shared_ptr<PlanNode>
             THROW_NOT_IMPLEMENTED;
         }
 
-        PhysicalOperatorContext child_context = BuildPhysicalPlan(aggregate->child);
-        std::vector<std::unique_ptr<AggregationFunction>> agg_functions;
-        Schema schema;
-
-        for (const std::shared_ptr<Expression>& expr : aggregate->aggregate_expressions) {
-            if (dynamic_cast<CountExpression*>(expr.get()) != nullptr) {
-                agg_functions.push_back(std::make_unique<CountRowsAggregationFunction>());
-                schema.AddColumn(expr->GetOutputName(), ColumnType::INT32);
-                continue;
-            }
-
-            if (dynamic_cast<SumExpression*>(expr.get()) != nullptr) {
-                const std::string col_name = expr->GetName();
-                const size_t col_idx = child_context.schema.GetColumnIndexByName(col_name);
-                const ColumnType col_type = child_context.schema.GetColumnTypeByName(col_name);
-
-                switch (col_type) {
-                    case ColumnType::INT32:
-                        agg_functions.push_back(
-                            std::make_unique<SumAggregationFunction<Int32Column>>(col_idx));
-                        schema.AddColumn(expr->GetOutputName(), ColumnType::INT32);
-                        break;
-                    case ColumnType::FLOAT:
-                        agg_functions.push_back(
-                            std::make_unique<SumAggregationFunction<FloatColumn>>(col_idx));
-                        schema.AddColumn(expr->GetOutputName(), ColumnType::FLOAT);
-                        break;
-                    default:
-                        THROW_NOT_IMPLEMENTED;
-                }
-                continue;
-            }
-
-            THROW_NOT_IMPLEMENTED;
+        std::vector<std::string> needed_columns = aggregate->group_by_columns;
+        for (const std::shared_ptr<AggregateExpression>& expr : aggregate->aggregate_expressions) {
+            expr->CollectRequiredColumns(needed_columns);
         }
+        std::sort(needed_columns.begin(), needed_columns.end());
+        needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
+                             needed_columns.end());
 
+        PhysicalOperatorContext child_context = BuildPhysicalPlan(aggregate->child, needed_columns);
+        std::vector<std::unique_ptr<AggregationFunction>> agg_functions;
+        Schema output_schema;
+        for (const std::shared_ptr<AggregateExpression>& expr : aggregate->aggregate_expressions) {
+            agg_functions.push_back(
+                expr->CreateAggregationFunction(child_context.schema, output_schema));
+        }
         auto op = std::make_unique<AggregationOperator>(std::move(child_context.root_operator),
                                                         std::move(agg_functions));
-        return {std::move(op), std::move(schema)};
+        return {std::move(op), std::move(output_schema)};
+    }
+
+    if (auto filter = std::dynamic_pointer_cast<FilterNode>(plan_node)) {
+        std::vector<std::string> needed_columns;
+        filter->filter_expression->CollectRequiredColumns(needed_columns);
+        std::sort(needed_columns.begin(), needed_columns.end());
+        needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
+                             needed_columns.end());
+
+        PhysicalOperatorContext child_context = BuildPhysicalPlan(filter->child, needed_columns);
+        std::unique_ptr<FilterFunction> filter_function =
+            filter->filter_expression->CreateFilterFunction(child_context.schema);
+        auto op = std::make_unique<FilterOperator>(std::move(child_context.root_operator),
+                                                    std::move(filter_function));
+        return {std::move(op), std::move(child_context.schema)};
     }
 
     THROW_RUNTIME_ERROR("Unknown plan node type");

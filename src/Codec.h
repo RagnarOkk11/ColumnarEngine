@@ -23,11 +23,8 @@ template <typename T>
 class Codec {
 public:
     virtual ~Codec() = default;
-
     virtual CodecType GetType() const = 0;
-
     virtual std::vector<char> Encode(const std::vector<T>& data) = 0;
-
     virtual std::vector<T> Decode(const std::vector<char>& encoded_data) = 0;
 };
 

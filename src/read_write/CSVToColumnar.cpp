@@ -99,7 +99,7 @@ void CSVToColumnar::WriteToColumnar(const std::string& columnar_file_path,
     ColumnarWriter writer(columnar_file_path);
     writer.WriteHeader(column_names, column_types);
 
-    static constexpr size_t kByteSize = 1 << 22;
+    static constexpr size_t kByteSize = 1 << 20;
     bool end_flag = true;
     VectorOfStrings2D column_batch;
 

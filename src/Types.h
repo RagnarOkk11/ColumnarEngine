@@ -288,6 +288,10 @@ public:
         data_.clear();
     }
 
+    const std::vector<char>& GetData() const {
+        return data_;
+    }
+
 private:
     std::vector<char> data_;
 };
@@ -380,6 +384,11 @@ public:
         offsets_.push_back(data_.size());
     }
 
+    void GetData() {
+        // TODO
+        THROW_NOT_IMPLEMENTED;
+    }
+
 private:
     std::vector<char> data_;
     std::vector<size_t> offsets_;
@@ -428,6 +437,11 @@ public:
         data_.clear();
     }
 
+    void GetData() {
+        // TODO
+        THROW_NOT_IMPLEMENTED;
+    }
+
 private:
     std::vector<std::string> data_;
     // TODO: Implement date-specific methods and storage
@@ -474,6 +488,11 @@ public:
 
     void Clear() override {
         data_.clear();
+    }
+
+    void GetData() {
+        // TODO
+        THROW_NOT_IMPLEMENTED;
     }
 
 private:

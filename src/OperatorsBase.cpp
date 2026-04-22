@@ -3,6 +3,7 @@
 //
 
 #include "AggregationFunctions.h"
+#include "FilterFunctions.h"
 #include "OperatorsBase.h"
 
 AggregationOperator::AggregationOperator(
@@ -16,10 +17,9 @@ std::unique_ptr<RecordBatch> AggregationOperator::Run() {
         return nullptr;
     }
     while (std::unique_ptr<RecordBatch> batch = child_->Run()) {
-        for (std::unique_ptr<AggregationFunction>& aggregation_function :
-             aggregation_functions_) {
+        for (std::unique_ptr<AggregationFunction>& aggregation_function : aggregation_functions_) {
             aggregation_function->Update(*batch);
-             }
+        }
     }
     auto result_batch = std::make_unique<RecordBatch>();
     result_batch->num_rows = 1;
@@ -30,4 +30,22 @@ std::unique_ptr<RecordBatch> AggregationOperator::Run() {
 
     finished_ = true;
     return result_batch;
+}
+
+FilterOperator::FilterOperator(std::unique_ptr<Operator> child,
+                               std::shared_ptr<FilterFunction> filter_function)
+    : child_(std::move(child)), filter_function_(std::move(filter_function)) {
+}
+
+std::unique_ptr<RecordBatch> FilterOperator::Run() {
+    while (std::unique_ptr<RecordBatch> batch = child_->Run()) {
+        std::vector<uint32_t> selection_vector = filter_function_->Evaluate(*batch);
+        if (selection_vector.empty()) {
+            continue;
+        }
+        batch->num_rows = selection_vector.size();
+        batch->selection_vector = std::move(selection_vector);
+        return batch;
+    }
+    return nullptr;
 }
