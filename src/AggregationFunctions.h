@@ -8,8 +8,8 @@
 #include "OperatorsBase.h"
 
 #include <memory>
+#include <limits>
 #include <unordered_set>
-#include <bits/locale_facets_nonio.h>
 
 class AggregationFunction {
 public:
@@ -24,6 +24,11 @@ struct SumOperation {
     static inline void Apply(ResultType& result, const ValueType& value) {
         result += value;
     }
+
+    template <typename ResultType>
+    static constexpr ResultType GetInitValue() {
+        return 0;
+    }
 };
 
 struct MaxOperation {
@@ -32,6 +37,25 @@ struct MaxOperation {
         if (value > result) {
             result = value;
         }
+    }
+
+    template <typename ResultType>
+    static constexpr ResultType GetInitValue() {
+        return std::numeric_limits<ResultType>::lowest();
+    }
+};
+
+struct MinOperation {
+    template <typename ResultType, typename ValueType>
+    static inline void Apply(ResultType& result, const ValueType& value) {
+        if (value < result) {
+            result = value;
+        }
+    }
+
+    template <typename ResultType>
+    static constexpr ResultType GetInitValue() {
+        return std::numeric_limits<ResultType>::max();
     }
 };
 
@@ -98,20 +122,26 @@ struct AggregationFunctionTraits<LongDoubleColumn> {
 template <>
 struct AggregationFunctionTraits<CharColumn> {
     using ValueType = char;
-};
-
-template <>
-struct AggregationFunctionTraits<StringColumn> {
-    using ValueType = std::string;
+    using StateType = int16_t;
+    using ResultColumnType = Int16Column;
 };
 
 template <>
 struct AggregationFunctionTraits<DateColumn> {
-    using ValueType = uint32_t;
+    using ValueType = int32_t;
+    using StateType = int32_t;
+    using ResultColumnType = DateColumn;
 };
 
 template <>
 struct AggregationFunctionTraits<TimestampColumn> {
+    using ValueType = int64_t;
+    using StateType = int64_t;
+    using ResultColumnType = TimestampColumn;
+};
+
+template <>
+struct AggregationFunctionTraits<StringColumn> {
     using ValueType = std::string;
 };
 
@@ -121,7 +151,7 @@ class TypedAggregationFunction : public AggregationFunction {
     using StateType = typename AggregationFunctionTraits<ColumnType>::StateType;
 
 public:
-    explicit TypedAggregationFunction(size_t column_index, StateType initial_state = StateType{})
+    explicit TypedAggregationFunction(size_t column_index, StateType initial_state = Operation::template GetInitValue<StateType>())
         : column_index_(column_index), state_(initial_state) {
     }
 
@@ -152,6 +182,9 @@ private:
 
 template <typename ColumnType>
 using SumAggregationFunction = TypedAggregationFunction<ColumnType, SumOperation>;
+
+template <typename ColumnType>
+using MinAggregationFunction = TypedAggregationFunction<ColumnType, MinOperation>;
 
 template <typename ColumnType>
 using MaxAggregationFunction = TypedAggregationFunction<ColumnType, MaxOperation>;

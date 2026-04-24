@@ -62,6 +62,16 @@ public:
         df.Display();
     }
 
+    // SELECT MIN(EventDate), MAX(EventDate) FROM hits;
+    void Query06() {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {})
+                .Aggregate({}, {Min("EventDate", "min_event_date"), Max("EventDate", "max_event_date")})
+                .Collect();
+
+        df.Display();
+    }
+
 private:
     std::string columnar_file_path_;
 };
@@ -72,31 +82,31 @@ int main(int argc, char** argv) {
                   << "<csv_file_path> <columnar_file_path> <schema_file_path>\n";
         return 1;
     }
-    try {
-        std::cout << "Converting CSV to columnar format...\n";
-        const auto start = std::chrono::steady_clock::now();
-        CSVToColumnar converter;
-        converter.ConvertWithSchema(argv[1], argv[2], argv[3]);
-        const auto time =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() * 1000;
-        std::cout << "Conversion completed in " << time << " ms\n";
-
-    } catch (std::exception& e) {
-        std::cout << "Convert fail: " << e.what() << '\n';
-        return 1;
-    }
-
     // try {
-    //     std::cout << "Running...\n";
+    //     std::cout << "Converting CSV to columnar format...\n";
     //     const auto start = std::chrono::steady_clock::now();
-    //     Query query(argv[2]);
-    //     query.Query05();
+    //     CSVToColumnar converter;
+    //     converter.ConvertWithSchema(argv[1], argv[2], argv[3]);
     //     const auto time =
     //         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() *
     //         1000;
-    //     std::cout << "Query 3 completed in " << time << " ms\n";
+    //     std::cout << "Conversion completed in " << time << " ms\n";
+    //
     // } catch (std::exception& e) {
-    //     std::cout << "Query fail: " << e.what() << '\n';
+    //     std::cout << "Convert fail: " << e.what() << '\n';
     //     return 1;
     // }
+
+    try {
+        std::cout << "Running...\n";
+        const auto start = std::chrono::steady_clock::now();
+        Query query(argv[2]);
+        query.Query06();
+        const auto time =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() * 1000;
+        std::cout << "Query 3 completed in " << time << " ms\n";
+    } catch (std::exception& e) {
+        std::cout << "Query fail: " << e.what() << '\n';
+        return 1;
+    }
 }

@@ -40,16 +40,21 @@ public:
         size_t ind = child_schema.GetColumnIndexByName(column_name_);
         ColumnType column_type = child_schema.GetColumnTypeByName(column_name_);
 
-        #define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE) \
-            case ColumnType::ENUM_VAL:                     \
-                return std::make_unique<NotEqFilterFunction<CLASS_TYPE, ValueType>>(ind, value_);
+#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE)                                            \
+    case ColumnType::ENUM_VAL:                                                                \
+        if constexpr (std::is_same_v<typename CLASS_TYPE::ValueType, ValueType>) {            \
+            return std::make_unique<NotEqFilterFunction<CLASS_TYPE, ValueType>>(ind, value_); \
+        } else {                                                                              \
+            THROW_NOT_IMPLEMENTED;                                                            \
+        }
 
-                switch (column_type) {
-                    FOR_EACH_COLUMN_TYPE(HANDLE_TYPE)
-                    default:
-                        THROW_NOT_IMPLEMENTED;
-                }
-        #undef HANDLE_TYPE
+        switch (column_type) {
+            FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
+            default:
+                THROW_NOT_IMPLEMENTED;
+        }
+
+#undef HANDLE_TYPE
     }
 
 private:

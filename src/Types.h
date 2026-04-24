@@ -2,6 +2,8 @@
 // Created by ragnarokk on 03.01.2026.
 //
 
+// OPTIMIZE: function AddBatch may be done with better logic of reserve (as in StringColumn)
+
 #ifndef COLUMNAR_ENGINE_OBJECT_H
 #define COLUMNAR_ENGINE_OBJECT_H
 
@@ -10,7 +12,6 @@
 
 #include <algorithm>
 #include <charconv>
-#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -140,7 +141,7 @@ struct ColumnTypeTraits<double> {
 template <>
 struct ColumnTypeTraits<long double> {
     static constexpr ColumnType kType = ColumnType::LONGDOUBLE;
-    static double FromString(const std::string_view& value) {
+    static long double FromString(const std::string_view& value) {
         return std::stold(std::string(value));
     }
 };
@@ -175,12 +176,18 @@ inline std::string ToString<__int128_t>(__int128_t value) {
 template <typename T>
 class NumericColumn : public Column {
 public:
+    using ValueType = T;
+
     ColumnType GetType() const override {
         return ColumnTypeTraits<T>::kType;
     }
 
     size_t Size() const override {
         return data_.size();
+    }
+
+    void Add(T value) {
+        data_.push_back(value);
     }
 
     void Add(const std::string& value) override {
@@ -226,10 +233,6 @@ public:
         data_.clear();
     }
 
-    void Add(T value) {
-        data_.push_back(value);
-    }
-
     const std::vector<T>& GetData() const {
         return data_;
     }
@@ -248,6 +251,8 @@ using LongDoubleColumn = NumericColumn<long double>;
 
 class CharColumn : public Column {
 public:
+    using ValueType = char;
+
     ColumnType GetType() const override {
         return ColumnType::CHAR;
     }
@@ -305,8 +310,12 @@ private:
     std::vector<char> data_;
 };
 
+// OPTIMIZE: perf decreased because i made VectorOfStrings logic and moved this logic into a
+// particular class
 class StringColumn : public Column {
 public:
+    using ValueType = std::string;
+
     ColumnType GetType() const override {
         return ColumnType::STRING;
     }
@@ -408,107 +417,175 @@ private:
     }
 };
 
-class DateColumn : public Column {
+template <typename Derived, typename T, ColumnType CType>
+class TemporalColumn : public Column {
 public:
+    using ValueType = T;
+
     ColumnType GetType() const override {
-        return ColumnType::DATE;
+        return CType;
     }
 
     size_t Size() const override {
         return data_.size();
     }
 
-    void Add([[maybe_unused]] const std::string& value) override {
-
+    void Add(T value) {
+        data_.push_back(value);
     }
 
-    void AddView([[maybe_unused]] std::string_view value) override {
-        // TODO
+    void Add(const std::string& value) override {
+        data_.push_back(Derived::Parse(value));
     }
 
-    void AddBatch([[maybe_unused]] const VectorOfStrings2D& batch,
-                  [[maybe_unused]] size_t j) override {
-        // TODO
+    void AddView(std::string_view value) override {
+        data_.push_back(Derived::Parse(value));
     }
 
-    uint64_t WriteToFile([[maybe_unused]] std::ofstream& file) override {
-        // TODO
-        return 0;
+    void AddBatch(const VectorOfStrings2D& batch, size_t j) override {
+        size_t h = batch.Height();
+        data_.reserve(data_.size() + h);
+        for (size_t i = 0; i < h; ++i) {
+            std::string_view cur = batch.GetString2D(i, j);
+            data_.push_back(Derived::Parse(cur));
+        }
+    }
+
+    uint64_t WriteToFile(std::ofstream& file) override {
+        if (!data_.empty()) {
+            file.write(reinterpret_cast<const char*>(data_.data()), data_.size() * sizeof(T));
+        }
+        return data_.size() * sizeof(T);
     }
 
     std::string GetDataAsString(size_t index) const override {
-        if (index >= data_.size()) {
-            throw std::out_of_range("Index out of range");
+        if (index >= data_.size()) [[unlikely]] {
+            THROW_RUNTIME_ERROR("Index out of range");
         }
-        return std::to_string(data_[index]);
+        return Derived::Format(data_[index]);
     }
 
-    void ReadFromRawData([[maybe_unused]] const std::vector<char>& buffer) override {
-        // TODO
+    void ReadFromRawData(const std::vector<char>& buffer) override {
+        if (buffer.size() % sizeof(T) != 0) {
+            THROW_RUNTIME_ERROR("Raw buffer size is not aligned with type size");
+        }
+        size_t n = buffer.size() / sizeof(T);
+        data_.resize(n);
+        std::memcpy(data_.data(), buffer.data(), buffer.size());
     }
 
     void Clear() override {
         data_.clear();
     }
 
-    const std::vector<uint32_t>& GetData() const {
+    const std::vector<T>& GetData() const {
         return data_;
     }
 
 private:
-    std::vector<uint32_t> data_;
+    std::vector<T> data_;
 };
 
-class TimestampColumn : public Column {
+class DateColumn : public TemporalColumn<DateColumn, int32_t, ColumnType::DATE> {
 public:
-    ColumnType GetType() const override {
-        return ColumnType::TIMESTAMP;
-    }
-
-    size_t Size() const override {
-        return data_.size();
-    }
-
-    void Add([[maybe_unused]] const std::string& value) override {
-        // TODO
-    }
-
-    void AddView([[maybe_unused]] std::string_view value) override {
-        // TODO
-    }
-
-    void AddBatch([[maybe_unused]] const VectorOfStrings2D& batch,
-                  [[maybe_unused]] size_t j) override {
-        // TODO
-    }
-
-    uint64_t WriteToFile([[maybe_unused]] std::ofstream& file) override {
-        // TODO
-        return 0;
-    }
-
-    std::string GetDataAsString(size_t index) const override {
-        if (index >= data_.size()) {
-            throw std::out_of_range("Index out of range");
+    static int32_t Parse(std::string_view unit) {
+        if (unit.size() != 10 || unit[4] != '-' || unit[7] != '-') [[unlikely]] {
+            THROW_RUNTIME_ERROR("Invalid date format: " + std::string(unit));
         }
-        return data_[index];
+
+        int32_t year =
+            (unit[0] - '0') * 1000 + (unit[1] - '0') * 100 + (unit[2] - '0') * 10 + (unit[3] - '0');
+        int32_t month = (unit[5] - '0') * 10 + (unit[6] - '0');
+        int32_t day = (unit[8] - '0') * 10 + (unit[9] - '0');
+
+        year -= (month <= 2);
+        const int era = (year >= 0 ? year : year - 399) / 400;
+        const unsigned yoe = static_cast<unsigned>(year - era * 400);
+        const unsigned doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+        const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+
+        return era * 146097 + static_cast<int32_t>(doe) - 719468;
     }
 
-    void ReadFromRawData([[maybe_unused]] const std::vector<char>& buffer) override {
-        // TODO
+    static std::string Format(int32_t days) {
+        days += 719468;
+        const int era = (days >= 0 ? days : days - 146096) / 146097;
+        const unsigned doe = static_cast<unsigned>(days - era * 146097);
+        const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        const int y = static_cast<int>(yoe) + era * 400;
+        const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        const unsigned mp = (5 * doy + 2) / 153;
+        const unsigned d = doy - (153 * mp + 2) / 5 + 1;
+        const unsigned m = mp + (mp < 10 ? 3 : -9);
+        const int year = y + (m <= 2);
+
+        std::string res = "0000-00-00";
+        auto write_digit = [&](int val, int pos, int len) {
+            for (int i = 0; i < len; ++i) {
+                res[pos + len - 1 - i] = (val % 10) + '0';
+                val /= 10;
+            }
+        };
+        write_digit(year, 0, 4);
+        write_digit(m, 5, 2);
+        write_digit(d, 8, 2);
+        return res;
+    }
+};
+
+class TimestampColumn : public TemporalColumn<TimestampColumn, int64_t, ColumnType::TIMESTAMP> {
+public:
+    static int64_t Parse(std::string_view unit) {
+        if (unit.size() != 19 || unit[4] != '-' || unit[7] != '-' || unit[10] != ' ' ||
+            unit[13] != ':' || unit[16] != ':') [[unlikely]] {
+            THROW_RUNTIME_ERROR("Invalid date format: " + std::string(unit));
+        }
+
+        auto to_int2 = [](char a, char b) { return (a - '0') * 10 + (b - '0'); };
+
+        int year =
+            (unit[0] - '0') * 1000 + (unit[1] - '0') * 100 + (unit[2] - '0') * 10 + (unit[3] - '0');
+        int month = to_int2(unit[5], unit[6]);
+        int day = to_int2(unit[8], unit[9]);
+        int hour = to_int2(unit[11], unit[12]);
+        int minute = to_int2(unit[14], unit[15]);
+        int second = to_int2(unit[17], unit[18]);
+
+        year -= (month <= 2);
+        const int era = (year >= 0 ? year : year - 399) / 400;
+        const unsigned yoe = static_cast<unsigned>(year - era * 400);
+        const unsigned doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+        const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+
+        int32_t days = era * 146097 + static_cast<int>(doe) - 719468;
+        int64_t seconds = hour * 3600 + minute * 60 + second;
+        return static_cast<int64_t>(days) * 86400 + seconds;
     }
 
-    void Clear() override {
-        data_.clear();
-    }
+    static std::string Format(int64_t total_seconds) {
+        int64_t days = total_seconds / 86400;
+        int64_t seconds_in_day = total_seconds % 86400;
+        if (seconds_in_day < 0) {
+            seconds_in_day += 86400;
+            days -= 1;
+        }
 
-    const std::vector<std::string>& GetData() const {
-        return data_;
-    }
+        std::string res = DateColumn::Format(static_cast<int32_t>(days));
+        res += " 00:00:00";
+        int hour = seconds_in_day / 3600;
+        int minute = (seconds_in_day % 3600) / 60;
+        int second = seconds_in_day % 60;
+        auto write_digit = [&](int val, int pos) {
+            res[pos] = (val / 10) + '0';
+            res[pos + 1] = (val % 10) + '0';
+        };
 
-private:
-    std::vector<std::string> data_;
-    // TODO: Implement timestamp-specific methods and storage
+        write_digit(hour, 11);
+        write_digit(minute, 14);
+        write_digit(second, 17);
+
+        return res;
+    }
 };
 
 #endif  // COLUMNAR_ENGINE_OBJECT_H
