@@ -30,7 +30,6 @@ add_executable(columnar-engine
         ExecutionAPI.h
         AggregationExpressions.h
         OperatorsBase.cpp
-        VectorOfStrings.cpp
         VectorOfStrings.h
         FilterExpressions.h
         FilterFunctions.h
@@ -42,7 +41,6 @@ add_executable(test_csv_parser
         read_write/test/test_csv_parser.cpp
         read_write/CSVTokenizer.cpp
         read_write/CSVReader.cpp
-        VectorOfStrings.cpp
 )
 
 target_link_libraries(test_csv_parser PRIVATE
@@ -56,7 +54,6 @@ add_executable(test_reader_writer
         read_write/CSVReader.cpp
         read_write/ColumnarWriter.cpp
         read_write/CSVToColumnar.cpp
-        VectorOfStrings.cpp
 )
 
 target_link_libraries(test_reader_writer PRIVATE
@@ -65,7 +62,6 @@ target_link_libraries(test_reader_writer PRIVATE
 
 add_executable(test_vector_of_strings
         test_vector_of_strings.cpp
-        VectorOfStrings.cpp
         VectorOfStrings.h
 )
 

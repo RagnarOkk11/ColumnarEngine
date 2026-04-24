@@ -7,16 +7,17 @@
 
 // USE THIS EVERYWHERE FOR SWITCHING
 // Прости, Герман, но я не хочу везде исправлять переборы типов, если новый добавился...
-#define FOR_EACH_COLUMN_TYPE(M)       \
-    M(INT16, "INT16", Int16Column)    \
-    M(INT32, "INT32", Int32Column)    \
-    M(INT64, "INT64", Int64Column)    \
-    M(INT128, "INT128", Int128Column) \
-    M(FLOAT, "FLOAT", FloatColumn)    \
-    M(DOUBLE, "DOUBLE", DoubleColumn) \
-    M(CHAR, "CHAR", CharColumn)       \
-    M(STRING, "STRING", StringColumn) \
-    M(DATE, "DATE", DateColumn)       \
+#define FOR_EACH_COLUMN_TYPE(M)                   \
+    M(INT16, "INT16", Int16Column)                \
+    M(INT32, "INT32", Int32Column)                \
+    M(INT64, "INT64", Int64Column)                \
+    M(INT128, "INT128", Int128Column)             \
+    M(FLOAT, "FLOAT", FloatColumn)                \
+    M(DOUBLE, "DOUBLE", DoubleColumn)             \
+    M(LONGDOUBLE, "LONGDOUBLE", LongDoubleColumn) \
+    M(CHAR, "CHAR", CharColumn)                   \
+    M(STRING, "STRING", StringColumn)             \
+    M(DATE, "DATE", DateColumn)                   \
     M(TIMESTAMP, "TIMESTAMP", TimestampColumn)
 
 #define ASSERT(cond)                                                                          \

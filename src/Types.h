@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
-#include <limits>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -26,10 +25,11 @@ enum class ColumnType : uint8_t {
     INT128,
     FLOAT,
     DOUBLE,
+    LONGDOUBLE,
     CHAR,
     STRING,
     DATE,
-    TIMESTAMP
+    TIMESTAMP,
 };
 
 struct ColumnMetadata {
@@ -137,6 +137,14 @@ struct ColumnTypeTraits<double> {
     }
 };
 
+template <>
+struct ColumnTypeTraits<long double> {
+    static constexpr ColumnType kType = ColumnType::LONGDOUBLE;
+    static double FromString(const std::string_view& value) {
+        return std::stold(std::string(value));
+    }
+};
+
 template <typename T>
     requires std::is_integral_v<T> || std::is_floating_point_v<T>
 std::string ToString(T value) {
@@ -236,6 +244,7 @@ using Int64Column = NumericColumn<int64_t>;
 using Int128Column = NumericColumn<__int128_t>;
 using FloatColumn = NumericColumn<float>;
 using DoubleColumn = NumericColumn<double>;
+using LongDoubleColumn = NumericColumn<long double>;
 
 class CharColumn : public Column {
 public:
@@ -298,52 +307,52 @@ private:
 
 class StringColumn : public Column {
 public:
-    StringColumn() {
-        offsets_.push_back(0);
-    }
-
     ColumnType GetType() const override {
         return ColumnType::STRING;
     }
 
     size_t Size() const override {
-        return offsets_.size() - 1;
+        return data_.Size();
     }
 
     void Add(const std::string& value) override {
-        AddString(value);
+        data_.PushBack(value);
     }
 
     void AddView(std::string_view value) override {
-        AddString(value);
+        data_.PushBack(value);
     }
 
     void AddBatch(const VectorOfStrings2D& batch, size_t j) override {
         size_t h = batch.Height();
-        offsets_.reserve(offsets_.size() + h);
-        data_.reserve(data_.size() + batch.ColumnSize(j));
+        EnsureCapacity(batch.ColumnSize(j), h);
+        // data_.ReserveOffsets(data_.Size() + h + 1);
+        // data_.ReserveData(data_.DataSize() + batch.ColumnSize(j));
         for (size_t i = 0; i < h; ++i) {
-            AddString(batch.GetString2D(i, j));
+            data_.PushBack(batch.GetString2D(i, j));
         }
     }
 
     uint64_t WriteToFile(std::ofstream& file) override {
+        const std::vector<size_t>& offsets = data_.GetOffsets();
+        const std::vector<char>& data = data_.GetData();
+
         uint64_t total_size = 0;
         std::vector<char> buffer;
         size_t h = Size();
         size_t total_len = 0;
         for (size_t i = 0; i < h; ++i) {
-            total_len += sizeof(uint32_t) + (offsets_[i + 1] - offsets_[i]);
+            total_len += sizeof(uint32_t) + (offsets[i + 1] - offsets[i]);
         }
         buffer.reserve(total_len);
         for (size_t i = 0; i < h; ++i) {
-            size_t start = offsets_[i];
-            size_t end = offsets_[i + 1];
+            size_t start = offsets[i];
+            size_t end = offsets[i + 1];
             uint32_t length = end - start;
             buffer.insert(buffer.end(), reinterpret_cast<const char*>(&length),
                           reinterpret_cast<const char*>(&length) + sizeof(length));
             if (length > 0) {
-                buffer.insert(buffer.end(), data_.begin() + start, data_.begin() + end);
+                buffer.insert(buffer.end(), data.begin() + start, data.begin() + end);
             }
             total_size += sizeof(length) + length;
         }
@@ -352,12 +361,10 @@ public:
     }
 
     std::string GetDataAsString(size_t index) const override {
-        if (index >= Size()) {
-            throw std::out_of_range("Index out of range");
+        if (index >= Size()) [[unlikely]] {
+            THROW_RUNTIME_ERROR("Index out of range");
         }
-        size_t start = offsets_[index];
-        size_t end = offsets_[index + 1];
-        return std::string(data_.data() + start, end - start);
+        return std::string{data_[index]};
     }
 
     void ReadFromRawData(const std::vector<char>& buffer) override {
@@ -368,30 +375,37 @@ public:
             std::memcpy(&length, buffer.data() + offset, sizeof(length));
             offset += sizeof(length);
             std::string_view str(buffer.data() + offset, length);
-            AddString(str);
+            data_.PushBack(str);
             offset += length;
         }
     }
 
     void Clear() override {
-        data_.clear();
-        offsets_.clear();
-        offsets_.push_back(0);
+        data_.Clear();
     }
 
-    void AddString(std::string_view value) {
-        data_.insert(data_.end(), value.begin(), value.end());
-        offsets_.push_back(data_.size());
-    }
-
-    void GetData() {
-        // TODO
-        THROW_NOT_IMPLEMENTED;
+    const VectorOfStrings& GetData() {
+        return data_;
     }
 
 private:
-    std::vector<char> data_;
-    std::vector<size_t> offsets_;
+    VectorOfStrings data_;
+
+    void EnsureCapacity(size_t data_size, size_t elements) {
+        size_t required_sz = data_.DataSize() + data_size;
+        size_t data_cap = data_.DataCapacity();
+        if (required_sz > data_cap) {
+            size_t cap = data_cap == 0 ? 1024 : data_cap * 2;
+            data_.ReserveData(std::max(required_sz, cap));
+        }
+
+        size_t required_offset_size = data_.Size() + elements;
+        size_t off_cap = data_.OffsetsCapacity();
+        if (required_offset_size > off_cap) {
+            size_t cap = off_cap == 0 ? 1024 : off_cap * 2;
+            data_.ReserveOffsets(std::max(required_offset_size, cap));
+        }
+    }
 };
 
 class DateColumn : public Column {
@@ -405,7 +419,7 @@ public:
     }
 
     void Add([[maybe_unused]] const std::string& value) override {
-        // TODO
+
     }
 
     void AddView([[maybe_unused]] std::string_view value) override {
@@ -426,7 +440,7 @@ public:
         if (index >= data_.size()) {
             throw std::out_of_range("Index out of range");
         }
-        return data_[index];
+        return std::to_string(data_[index]);
     }
 
     void ReadFromRawData([[maybe_unused]] const std::vector<char>& buffer) override {
@@ -437,14 +451,12 @@ public:
         data_.clear();
     }
 
-    void GetData() {
-        // TODO
-        THROW_NOT_IMPLEMENTED;
+    const std::vector<uint32_t>& GetData() const {
+        return data_;
     }
 
 private:
-    std::vector<std::string> data_;
-    // TODO: Implement date-specific methods and storage
+    std::vector<uint32_t> data_;
 };
 
 class TimestampColumn : public Column {
@@ -490,9 +502,8 @@ public:
         data_.clear();
     }
 
-    void GetData() {
-        // TODO
-        THROW_NOT_IMPLEMENTED;
+    const std::vector<std::string>& GetData() const {
+        return data_;
     }
 
 private:
