@@ -124,7 +124,11 @@ int main(int argc, char** argv) {
         try {
             int query_number = std::stoi(argv[3]);
             Query query(argv[2]);
+            std::cerr << "Running query " << query_number << "...\n";
+            const auto start = std::chrono::steady_clock::now();
             query.RunQuery(query_number);
+            const auto time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() * 1000;
+            std::cerr << "Query " << query_number << " completed in " << time << " ms\n";
         } catch (std::exception& e) {
             std::cerr << "Query fail: " << e.what() << '\n';
             return 1;
