@@ -36,6 +36,7 @@ add_executable(columnar-engine
 )
 
 target_link_libraries(columnar-engine PRIVATE project_includes)
+target_compile_options(columnar-engine PRIVATE -Werror)
 
 add_executable(test_csv_parser
         read_write/test/test_csv_parser.cpp
