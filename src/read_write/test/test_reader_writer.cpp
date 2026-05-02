@@ -29,7 +29,7 @@ void RemoveTempFile(const std::string& filepath) {
     }
 }
 
-std::vector<int32_t> ExtractInt32Values(const std::unique_ptr<Column>& column) {
+std::vector<int32_t> ExtractInt32Values(const std::shared_ptr<Column>& column) {
     Int32Column* int_col = dynamic_cast<Int32Column*>(column.get());
     if (!int_col) {
         return {};
@@ -53,7 +53,7 @@ std::vector<int32_t> ExtractInt32Values(const std::unique_ptr<Column>& column) {
     return result;
 }
 
-std::vector<std::string> ExtractStringValues(const std::unique_ptr<Column>& column) {
+std::vector<std::string> ExtractStringValues(const std::shared_ptr<Column>& column) {
     StringColumn* str_col = dynamic_cast<StringColumn*>(column.get());
     if (!str_col) {
         return {};

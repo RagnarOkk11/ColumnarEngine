@@ -39,6 +39,11 @@ struct FilterNode : public PlanNode {
     std::shared_ptr<FilterExpression> filter_expression;
 };
 
+struct OrderByNode : public PlanNode {
+    std::shared_ptr<PlanNode> child;
+    std::vector<std::pair<std::string, bool>> order_by_columns;
+};
+
 struct PhysicalOperatorContext {
     std::unique_ptr<Operator> root_operator;
     Schema schema;
@@ -90,7 +95,50 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
 
     if (auto aggregate = std::dynamic_pointer_cast<AggregateNode>(plan_node)) {
         if (!aggregate->group_by_columns.empty()) {
-            THROW_NOT_IMPLEMENTED;
+            std::vector<std::string> needed_columns = aggregate->group_by_columns;
+            for (const std::shared_ptr<AggregateExpression>& expr :
+                 aggregate->aggregate_expressions) {
+                expr->CollectRequiredColumns(needed_columns);
+            }
+            std::sort(needed_columns.begin(), needed_columns.end());
+            needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
+                                 needed_columns.end());
+
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(aggregate->child, needed_columns);
+
+            std::vector<size_t> group_col_indices;
+            std::vector<std::shared_ptr<Column>> empty_key_columns;
+            Schema output_schema;
+
+            for (const auto& col_name : aggregate->group_by_columns) {
+                size_t ind = child_context.schema.GetColumnIndexByName(col_name);
+                group_col_indices.push_back(ind);
+
+                ColumnType type = child_context.schema.GetColumnTypeByName(col_name);
+                output_schema.AddColumn(col_name, type);
+
+#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE) \
+    case ColumnType::ENUM_VAL: empty_key_columns.push_back(std::make_shared<CLASS_TYPE>()); break;
+
+                switch (type) {
+                    FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
+                    default: THROW_NOT_IMPLEMENTED;
+                }
+#undef HANDLE_TYPE
+            }
+
+            std::vector<std::unique_ptr<AggregationFunction>> agg_funcs;
+            for (const std::shared_ptr<AggregateExpression>& expr :
+                 aggregate->aggregate_expressions) {
+                agg_funcs.push_back(
+                    expr->CreateAggregationFunction(child_context.schema, output_schema));
+            }
+
+            auto op = std::make_unique<GroupByOperator>(
+                std::move(child_context.root_operator), std::move(group_col_indices),
+                std::move(empty_key_columns), std::move(agg_funcs));
+            return {std::move(op), std::move(output_schema)};
         }
 
         std::vector<std::string> needed_columns = aggregate->group_by_columns;
@@ -124,7 +172,22 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
         std::unique_ptr<FilterFunction> filter_function =
             filter->filter_expression->CreateFilterFunction(child_context.schema);
         auto op = std::make_unique<FilterOperator>(std::move(child_context.root_operator),
-                                                    std::move(filter_function));
+                                                   std::move(filter_function));
+        return {std::move(op), std::move(child_context.schema)};
+    }
+
+    if (auto order_by = std::dynamic_pointer_cast<OrderByNode>(plan_node)) {
+        PhysicalOperatorContext child_context =
+            BuildPhysicalPlan(order_by->child, required_columns);
+
+        std::vector<std::pair<size_t, bool>> sort_columns;
+        for (const auto& [col_name, is_desc] : order_by->order_by_columns) {
+            size_t sort_col_idx = child_context.schema.GetColumnIndexByName(col_name);
+            sort_columns.push_back({sort_col_idx, is_desc});
+        }
+
+        auto op = std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
+                                                    std::move(sort_columns));
         return {std::move(op), std::move(child_context.schema)};
     }
 

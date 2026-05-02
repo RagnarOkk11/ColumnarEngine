@@ -50,8 +50,7 @@ public:
 
         switch (column_type) {
             FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
-            default:
-                THROW_NOT_IMPLEMENTED;
+            default: THROW_NOT_IMPLEMENTED;
         }
 
 #undef HANDLE_TYPE

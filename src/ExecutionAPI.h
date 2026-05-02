@@ -40,7 +40,7 @@ public:
             }
             size_t rows = batch->columns[0]->Size();
             for (size_t i = 0; i < rows; ++i) {
-                for (const std::unique_ptr<Column>& column : batch->columns) {
+                for (const std::shared_ptr<Column>& column : batch->columns) {
                     std::cout << column->GetDataAsString(i) << " ";
                 }
                 std::cout << "\n";
@@ -80,6 +80,13 @@ public:
         filter_node->child = logical_plan_;
         filter_node->filter_expression = std::move(filter_expression);
         return DataFrame(filter_node);
+    }
+
+    DataFrame OrderBy(std::vector<std::pair<std::string, bool>> order_by_columns) {
+        auto order_by_node = std::make_shared<OrderByNode>();
+        order_by_node->child = logical_plan_;
+        order_by_node->order_by_columns = std::move(order_by_columns);
+        return DataFrame(order_by_node);
     }
 
     DataResult Collect() {

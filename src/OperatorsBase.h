@@ -7,18 +7,21 @@
 
 #include <memory>
 #include <vector>
+#include <unordered_map>
+#include <algorithm>
 
 #include "ColumnarReader.h"
 #include "macro.h"
 #include "Types.h"
 
 class AggregationFunction;
+class GroupedAggregationFunction;
 class FilterFunction;
 
 struct RecordBatch {
     size_t num_rows;
-    std::vector<uint32_t> selection_vector;
-    std::vector<std::unique_ptr<Column>> columns;
+    std::shared_ptr<const std::vector<uint32_t>> selection_vector;
+    std::vector<std::shared_ptr<Column>> columns;
 };
 
 class Operator {
@@ -68,7 +71,7 @@ public:
         record_batch->num_rows = 0;
 
         for (size_t col_idx : column_indices_) {
-            std::unique_ptr<Column> column_data = reader_.GetColumnData(col_idx, current_chunk_);
+            std::shared_ptr<Column> column_data = reader_.GetColumnData(col_idx, current_chunk_);
             if (record_batch->num_rows == 0) {
                 record_batch->num_rows = column_data->Size();
             }
@@ -109,6 +112,40 @@ public:
 private:
     std::unique_ptr<Operator> child_;
     std::shared_ptr<FilterFunction> filter_function_;
+};
+
+class GroupByOperator : public Operator {
+public:
+    GroupByOperator(std::unique_ptr<Operator> child, std::vector<size_t> group_by_col_indices,
+                    std::vector<std::shared_ptr<Column>> empty_key_columns,
+                    std::vector<std::unique_ptr<AggregationFunction>> agg_funcs);
+
+    std::unique_ptr<RecordBatch> Run() override;
+
+private:
+    std::unique_ptr<Operator> child_;
+    std::vector<size_t> group_by_col_indices_;
+    std::vector<std::shared_ptr<Column>> key_columns_;
+    std::vector<std::unique_ptr<AggregationFunction>> agg_funcs_;
+    bool accumulated_ = false;
+
+    std::unordered_map<std::string, uint32_t> hash_table_;
+};
+
+class OrderByOperator : public Operator {
+public:
+    OrderByOperator(std::unique_ptr<Operator> child,
+                    std::vector<std::pair<size_t, bool>> sort_columns);
+
+    std::unique_ptr<RecordBatch> Run() override;
+
+private:
+    std::unique_ptr<Operator> child_;
+    std::vector<std::pair<size_t, bool>> sort_columns_;
+    bool accumulated_ = false;
+    std::unique_ptr<RecordBatch> accumulated_batch_;
+    std::vector<uint32_t> indices_;
+    size_t current_idx_ = 0;
 };
 
 #endif  // COLUMNAR_ENGINE_OPERATORS_BASE_H

@@ -17,7 +17,7 @@ public:
 
     void WriteHeader(const VectorOfStrings2D& column_names,
                      const std::vector<ColumnType>& column_types);
-    void WriteBatch(const std::vector<std::unique_ptr<Column>>& columns);
+    void WriteBatch(const std::vector<std::shared_ptr<Column>>& columns);
 
     // magic, columns by batches, number of columns, name, type, offsets, sizes, number of rows,
     // metadata_start, magic

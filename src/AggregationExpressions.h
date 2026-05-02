@@ -80,8 +80,7 @@ public:
 
         switch (column_type) {
             FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
-            default:
-                THROW_NOT_IMPLEMENTED;
+            default: THROW_NOT_IMPLEMENTED;
         }
 #undef HANDLE_TYPE
     }
@@ -113,8 +112,7 @@ public:
 
         switch (column_type) {
             FOR_NUMERIC_COLUMN_TYPE(HANDLE_TYPE);
-            default:
-                THROW_NOT_IMPLEMENTED;
+            default: THROW_NOT_IMPLEMENTED;
         }
 
 #undef HANDLE_TYPE
@@ -147,8 +145,7 @@ public:
 
         switch (column_type) {
             FOR_NUMERIC_COLUMN_TYPE(HANDLE_TYPE);
-            default:
-                THROW_NOT_IMPLEMENTED;
+            default: THROW_NOT_IMPLEMENTED;
         }
 
 #undef HANDLE_TYPE
@@ -195,8 +192,7 @@ public:
             case ColumnType::LONGDOUBLE:
                 output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
                 return std::make_unique<SumAggregationFunction<LongDoubleColumn>>(column_ind);
-            default:
-                THROW_NOT_IMPLEMENTED;
+            default: THROW_NOT_IMPLEMENTED;
         }
     }
 };
@@ -226,8 +222,7 @@ public:
 
         switch (column_type) {
             FOR_NUMERIC_COLUMN_TYPE(HANDLE_TYPE);
-            default:
-                THROW_NOT_IMPLEMENTED;
+            default: THROW_NOT_IMPLEMENTED;
         }
     }
 

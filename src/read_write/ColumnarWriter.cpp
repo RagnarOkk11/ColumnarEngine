@@ -36,7 +36,7 @@ void ColumnarWriter::WriteHeader(const VectorOfStrings2D& column_names,
     header_written_ = true;
 }
 
-void ColumnarWriter::WriteBatch(const std::vector<std::unique_ptr<Column>>& columns) {
+void ColumnarWriter::WriteBatch(const std::vector<std::shared_ptr<Column>>& columns) {
     if (!header_written_) {
         throw std::runtime_error("Header must be written before writing batches");
     }

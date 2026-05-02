@@ -33,7 +33,7 @@ TEST_CASE("CSVTokenizer does not materialize empty token on hard EOF", "[CSVToke
     VectorOfStrings2D row;
 
     const size_t width_before = row.Width();
-    tokenizer.GetNextToken(row);
+    tokenizer.GetNextRow(row);
 
     REQUIRE(row.Width() == width_before);
     REQUIRE(tokenizer.IsEOF());
@@ -46,8 +46,8 @@ TEST_CASE("CSVTokenizer keeps last token without trailing newline", "[CSVTokeniz
     CSVTokenizer tokenizer(path);
     VectorOfStrings2D row;
 
-    tokenizer.GetNextToken(row);
-    tokenizer.GetNextToken(row);
+    tokenizer.GetNextRow(row);
+    tokenizer.GetNextRow(row);
 
     REQUIRE(row.Width() == 2);
     REQUIRE(row.GetString(0) == std::string_view("a"));

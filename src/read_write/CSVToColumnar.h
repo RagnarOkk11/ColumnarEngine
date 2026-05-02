@@ -20,12 +20,12 @@ public:
 private:
     void ParseHeaderToken(std::string_view token, VectorOfStrings2D& column_names,
                           std::vector<ColumnType>& column_types);
-    void AddColumn(ColumnType type, std::vector<std::unique_ptr<Column>>& columns);
+    void AddColumn(ColumnType type, std::vector<std::shared_ptr<Column>>& columns);
 
     void WriteToColumnar(const std::string& columnar_file_path,
                          const VectorOfStrings2D& column_names,
                          const std::vector<ColumnType>& column_types, CSVReader& reader,
-                         const std::vector<std::unique_ptr<Column>>& columns);
+                         const std::vector<std::shared_ptr<Column>>& columns);
 };
 
 #endif  // COLUMNAR_ENGINE_CSVTOCOLUMNAR_H

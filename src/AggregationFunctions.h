@@ -15,8 +15,9 @@ class AggregationFunction {
 public:
     virtual ~AggregationFunction() = default;
 
-    virtual void Update(const RecordBatch& batch) = 0;
-    virtual std::unique_ptr<Column> Finalize() = 0;
+    virtual void Update(const RecordBatch& batch,
+                        const std::vector<uint32_t>* group_ids = nullptr) = 0;
+    virtual std::shared_ptr<Column> Finalize() = 0;
 };
 
 struct SumOperation {
@@ -151,33 +152,49 @@ class TypedAggregationFunction : public AggregationFunction {
     using StateType = typename AggregationFunctionTraits<ColumnType>::StateType;
 
 public:
-    explicit TypedAggregationFunction(size_t column_index, StateType initial_state = Operation::template GetInitValue<StateType>())
-        : column_index_(column_index), state_(initial_state) {
+    explicit TypedAggregationFunction(size_t column_index) : column_index_(column_index) {
     }
 
-    void Update(const RecordBatch& batch) override {
+    void Update(const RecordBatch& batch,
+                const std::vector<uint32_t>* group_ids = nullptr) override {
         auto* column = static_cast<ColumnType*>(batch.columns[column_index_].get());
         const auto& data = column->GetData();
-        if (batch.selection_vector.empty()) {
-            for (const auto& value : data) {
-                Operation::Apply(state_, value);
+
+        if (!batch.selection_vector) {
+            for (size_t i = 0; i < batch.num_rows; ++i) {
+                uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+                if (gid >= states_.size()) {
+                    states_.resize(gid + 1, Operation::template GetInitValue<StateType>());
+                }
+                Operation::Apply(states_[gid], data[i]);
             }
         } else {
-            for (uint32_t ind : batch.selection_vector) {
-                Operation::Apply(state_, data[ind]);
+            for (size_t i = 0; i < batch.num_rows; ++i) {
+                uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+                if (gid >= states_.size()) {
+                    states_.resize(gid + 1, Operation::template GetInitValue<StateType>());
+                }
+                uint32_t ind = (*batch.selection_vector)[i];
+                Operation::Apply(states_[gid], data[ind]);
             }
         }
     }
 
-    std::unique_ptr<Column> Finalize() override {
-        auto result_column = std::make_unique<ResultColumnType>();
-        result_column->Add(state_);
+    std::shared_ptr<Column> Finalize() override {
+        auto result_column = std::make_shared<ResultColumnType>();
+        if (states_.empty()) {
+            result_column->Add(Operation::template GetInitValue<StateType>());
+        } else {
+            for (const auto& state : states_) {
+                result_column->Add(state);
+            }
+        }
         return result_column;
     }
 
 private:
     size_t column_index_;
-    StateType state_;
+    std::vector<StateType> states_;
 };
 
 template <typename ColumnType>
@@ -191,18 +208,31 @@ using MaxAggregationFunction = TypedAggregationFunction<ColumnType, MaxOperation
 
 class CountAggregationFunction : public AggregationFunction {
 public:
-    void Update(const RecordBatch& batch) override {
-        count_ += static_cast<int64_t>(batch.num_rows);
+    void Update(const RecordBatch& batch,
+                const std::vector<uint32_t>* group_ids = nullptr) override {
+        for (size_t i = 0; i < batch.num_rows; ++i) {
+            uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+            if (gid >= counts_.size()) {
+                counts_.resize(gid + 1, 0);
+            }
+            counts_[gid]++;
+        }
     }
 
-    std::unique_ptr<Column> Finalize() override {
-        auto result_column = std::make_unique<Int32Column>();
-        result_column->Add(static_cast<int32_t>(count_));
+    std::shared_ptr<Column> Finalize() override {
+        auto result_column = std::make_shared<Int32Column>();
+        if (counts_.empty()) {
+            result_column->Add(0);
+        } else {
+            for (int64_t c : counts_) {
+                result_column->Add(static_cast<int32_t>(c));
+            }
+        }
         return result_column;
     }
 
 private:
-    int64_t count_ = 0;
+    std::vector<int64_t> counts_;
 };
 
 template <typename ColumnType>
@@ -214,38 +244,54 @@ public:
     explicit DistinctCountAggregationFunction(size_t column_index) : column_index_(column_index) {
     }
 
-    void Update(const RecordBatch& batch) override {
+    void Update(const RecordBatch& batch,
+                const std::vector<uint32_t>* group_ids = nullptr) override {
         auto* column = static_cast<ColumnType*>(batch.columns[column_index_].get());
         const auto& data = column->GetData();
 
-        if (batch.selection_vector.empty()) {
-            for (const auto& value : data) {
+        if (!batch.selection_vector) {
+            for (size_t i = 0; i < batch.num_rows; ++i) {
+                uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+                if (gid >= distinct_values_.size()) {
+                    distinct_values_.resize(gid + 1);
+                }
                 if constexpr (std::is_same_v<ColumnType, StringColumn>) {
-                    distinct_values_.emplace(value);
+                    distinct_values_[gid].emplace(data[i]);
                 } else {
-                    distinct_values_.insert(value);
+                    distinct_values_[gid].insert(data[i]);
                 }
             }
         } else {
-            for (uint32_t ind : batch.selection_vector) {
+            for (size_t i = 0; i < batch.num_rows; ++i) {
+                uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+                if (gid >= distinct_values_.size()) {
+                    distinct_values_.resize(gid + 1);
+                }
+                uint32_t ind = (*batch.selection_vector)[i];
                 if constexpr (std::is_same_v<ColumnType, StringColumn>) {
-                    distinct_values_.emplace(data[ind]);
+                    distinct_values_[gid].emplace(data[ind]);
                 } else {
-                    distinct_values_.insert(data[ind]);
+                    distinct_values_[gid].insert(data[ind]);
                 }
             }
         }
     }
 
-    std::unique_ptr<Column> Finalize() override {
-        auto result_column = std::make_unique<ResultColumnType>();
-        result_column->Add(static_cast<int64_t>(distinct_values_.size()));
+    std::shared_ptr<Column> Finalize() override {
+        auto result_column = std::make_shared<ResultColumnType>();
+        if (distinct_values_.empty()) {
+            result_column->Add(0);
+        } else {
+            for (const auto& set : distinct_values_) {
+                result_column->Add(static_cast<int64_t>(set.size()));
+            }
+        }
         return result_column;
     }
 
 private:
     size_t column_index_;
-    std::unordered_set<ValueType> distinct_values_;
+    std::vector<std::unordered_set<ValueType>> distinct_values_;
 };
 
 template <typename ColumnType>
@@ -256,38 +302,59 @@ public:
     explicit AvgAggregationFunction(size_t column_index) : column_index_(column_index) {
     }
 
-    void Update(const RecordBatch& batch) override {
+    void Update(const RecordBatch& batch,
+                const std::vector<uint32_t>* group_ids = nullptr) override {
         auto* column = static_cast<ColumnType*>(batch.columns[column_index_].get());
         const auto& data = column->GetData();
-        if (batch.selection_vector.empty()) {
-            for (const auto& value : data) {
-                sum_ += static_cast<StateType>(value);
-                ++count_;
+
+        if (!batch.selection_vector) {
+            for (size_t i = 0; i < batch.num_rows; ++i) {
+                uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+                if (gid >= sums_.size()) {
+                    sums_.resize(gid + 1, 0);
+                    counts_.resize(gid + 1, 0);
+                }
+                sums_[gid] += static_cast<StateType>(data[i]);
+                counts_[gid]++;
             }
         } else {
-            for (uint32_t ind : batch.selection_vector) {
-                sum_ += static_cast<StateType>(data[ind]);
-                ++count_;
+            for (size_t i = 0; i < batch.num_rows; ++i) {
+                uint32_t gid = group_ids ? (*group_ids)[i] : 0;
+                if (gid >= sums_.size()) {
+                    sums_.resize(gid + 1, 0);
+                    counts_.resize(gid + 1, 0);
+                }
+                uint32_t ind = (*batch.selection_vector)[i];
+                sums_[gid] += static_cast<StateType>(data[ind]);
+                counts_[gid]++;
             }
         }
     }
 
-    std::unique_ptr<Column> Finalize() override {
-        auto result_column = std::make_unique<LongDoubleColumn>();
-        if (count_ == 0) {
+    std::shared_ptr<Column> Finalize() override {
+        auto result_column = std::make_shared<LongDoubleColumn>();
+        if (sums_.empty()) {
             result_column->Add(0.0);
         } else {
-            StateType quotient = sum_ / count_;
-            long double rem = static_cast<long double>(sum_ - quotient * count_) / count_;
-            result_column->Add(static_cast<long double>(quotient) + rem);
+            for (size_t gid = 0; gid < sums_.size(); ++gid) {
+                if (counts_[gid] == 0) {
+                    result_column->Add(0.0);
+                } else {
+                    StateType quotient = sums_[gid] / counts_[gid];
+                    long double rem =
+                        static_cast<long double>(sums_[gid] - quotient * counts_[gid]) /
+                        counts_[gid];
+                    result_column->Add(static_cast<long double>(quotient) + rem);
+                }
+            }
         }
         return result_column;
     }
 
 private:
     size_t column_index_;
-    StateType sum_ = 0;
-    int64_t count_ = 0;
+    std::vector<StateType> sums_;
+    std::vector<int64_t> counts_;
 };
 
 #endif  // COLUMNAR_ENGINE_AGGREGATIONFUNCTIONS_H

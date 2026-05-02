@@ -106,14 +106,14 @@ std::vector<char> ColumnarReader::GetRawColumnData(size_t column_index, size_t c
     return buffer;
 }
 
-std::unique_ptr<Column> ColumnarReader::GetColumnData(size_t column_index, size_t chunk_index) {
+std::shared_ptr<Column> ColumnarReader::GetColumnData(size_t column_index, size_t chunk_index) {
     std::vector<char> raw_data = GetRawColumnData(column_index, chunk_index);
     ColumnType type = metadata_[column_index].type;
-    std::unique_ptr<Column> column;
+    std::shared_ptr<Column> column;
 
 #define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE) \
     if (type == ColumnType::ENUM_VAL) {            \
-        column = std::make_unique<CLASS_TYPE>();   \
+        column = std::make_shared<CLASS_TYPE>();   \
     } else
 
     FOR_EACH_COLUMN_TYPE(HANDLE_TYPE) {

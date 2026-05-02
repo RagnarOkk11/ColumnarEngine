@@ -27,8 +27,8 @@ public:
         std::vector<uint32_t> selection_vector;
         selection_vector.reserve(batch.num_rows);
 
-        if (!batch.selection_vector.empty()) {
-            for (uint32_t ind : batch.selection_vector) {
+        if (batch.selection_vector) {
+            for (uint32_t ind : *batch.selection_vector) {
                 if (data[ind] != target_val_) {
                     selection_vector.push_back(ind);
                 }

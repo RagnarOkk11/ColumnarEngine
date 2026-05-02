@@ -11,3 +11,4 @@ KeepEmptyLinesAtTheStartOfBlocks: true
 SortIncludes: false
 PointerAlignment: Left
 BreakBeforeBraces: Attach
+AllowShortCaseLabelsOnASingleLine: true

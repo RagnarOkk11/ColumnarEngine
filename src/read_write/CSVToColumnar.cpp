@@ -19,7 +19,7 @@ void CSVToColumnar::Convert(const std::string& csv_file_path,
     VectorOfStrings2D raw_header;
     reader.ReadHeader(raw_header);
 
-    std::vector<std::unique_ptr<Column>> columns;
+    std::vector<std::shared_ptr<Column>> columns;
     VectorOfStrings2D column_names;
     std::vector<ColumnType> column_types;
 
@@ -41,7 +41,7 @@ void CSVToColumnar::ConvertWithSchema(const std::string& csv_file_path,
     Schema schema = Schema::DeserializeSchema(schema_file_path);
     const std::vector<Field> fields = schema.GetFields();
 
-    std::vector<std::unique_ptr<Column>> columns;
+    std::vector<std::shared_ptr<Column>> columns;
     VectorOfStrings2D column_names;
     std::vector<ColumnType> column_types;
 
@@ -77,12 +77,10 @@ void CSVToColumnar::ParseHeaderToken(std::string_view token, VectorOfStrings2D& 
 #undef HANDLE_TYPE
 }
 
-void CSVToColumnar::AddColumn(ColumnType type, std::vector<std::unique_ptr<Column>>& columns) {
+void CSVToColumnar::AddColumn(ColumnType type, std::vector<std::shared_ptr<Column>>& columns) {
     switch (type) {
-#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE)         \
-    case ColumnType::ENUM_VAL:                             \
-        columns.push_back(std::make_unique<CLASS_TYPE>()); \
-        break;
+#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE) \
+    case ColumnType::ENUM_VAL: columns.push_back(std::make_shared<CLASS_TYPE>()); break;
 
         FOR_EACH_COLUMN_TYPE(HANDLE_TYPE)
 #undef HANDLE_TYPE
@@ -95,7 +93,7 @@ void CSVToColumnar::AddColumn(ColumnType type, std::vector<std::unique_ptr<Colum
 void CSVToColumnar::WriteToColumnar(const std::string& columnar_file_path,
                                     const VectorOfStrings2D& column_names,
                                     const std::vector<ColumnType>& column_types, CSVReader& reader,
-                                    const std::vector<std::unique_ptr<Column>>& columns) {
+                                    const std::vector<std::shared_ptr<Column>>& columns) {
     ColumnarWriter writer(columnar_file_path);
     writer.WriteHeader(column_names, column_types);
 

@@ -18,7 +18,7 @@ public:
 
     std::vector<char> GetRawColumnData(size_t column_index, size_t chunk_index);
 
-    std::unique_ptr<Column> GetColumnData(size_t column_index, size_t chunk_index);
+    std::shared_ptr<Column> GetColumnData(size_t column_index, size_t chunk_index);
 
     const std::vector<ColumnMetadata>& GetMetadata() const;
 

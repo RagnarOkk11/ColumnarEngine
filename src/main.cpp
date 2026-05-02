@@ -64,11 +64,22 @@ public:
 
     // SELECT MIN(EventDate), MAX(EventDate) FROM hits;
     void Query06() {
-        auto df =
-            DataFrame::Select(columnar_file_path_, {})
-                .Aggregate({}, {Min("EventDate", "min_event_date"), Max("EventDate", "max_event_date")})
-                .Collect();
+        auto df = DataFrame::Select(columnar_file_path_, {})
+                      .Aggregate({}, {Min("EventDate", "min_event_date"),
+                                      Max("EventDate", "max_event_date")})
+                      .Collect();
 
+        df.Display();
+    }
+
+    // SELECT AdvEngineID, COUNT(*) FROM hits WHERE AdvEngineID <> 0 GROUP BY AdvEngineID ORDER BY
+    // COUNT(*) DESC;
+    void Query07() {
+        auto df = DataFrame::Select(columnar_file_path_, {"AdvEngineID"})
+                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
+                      .Aggregate({"AdvEngineID"}, {Count()})
+                      .OrderBy({{"count", true}})
+                      .Collect();
         df.Display();
     }
 
@@ -81,8 +92,8 @@ public:
             case 4: Query04(); break;
             case 5: Query05(); break;
             case 6: Query06(); break;
-            default:
-                THROW_RUNTIME_ERROR("Unknown query number: " + std::to_string(query_number));
+            case 7: Query07(); break;
+            default: THROW_RUNTIME_ERROR("Unknown query number: " + std::to_string(query_number));
         }
     }
 
@@ -102,7 +113,8 @@ int main(int argc, char** argv) {
 
     if (mode == "convert") {
         if (argc < 5) {
-            std::cerr << "Usage: " << argv[0] << " convert <csv_file> <columnar_file> <schema_file>\n";
+            std::cerr << "Usage: " << argv[0]
+                      << " convert <csv_file> <columnar_file> <schema_file>\n";
             return 1;
         }
         try {
@@ -110,7 +122,9 @@ int main(int argc, char** argv) {
             const auto start = std::chrono::steady_clock::now();
             CSVToColumnar converter;
             converter.ConvertWithSchema(argv[2], argv[3], argv[4]);
-            const auto time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() * 1000;
+            const auto time =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() *
+                1000;
             std::cerr << "Conversion completed in " << time << " ms\n";
         } catch (std::exception& e) {
             std::cerr << "Convert fail: " << e.what() << '\n';
@@ -127,7 +141,9 @@ int main(int argc, char** argv) {
             std::cerr << "Running query " << query_number << "...\n";
             const auto start = std::chrono::steady_clock::now();
             query.RunQuery(query_number);
-            const auto time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() * 1000;
+            const auto time =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() *
+                1000;
             std::cerr << "Query " << query_number << " completed in " << time << " ms\n";
         } catch (std::exception& e) {
             std::cerr << "Query fail: " << e.what() << '\n';
