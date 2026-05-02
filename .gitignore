@@ -25,6 +25,7 @@ columnar_hits_sample.tuff
 report.txt
 docker-test
 docker-test-results
+.vscode/
 
 
 # Prerequisites
