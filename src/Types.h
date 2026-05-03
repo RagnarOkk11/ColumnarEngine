@@ -45,19 +45,21 @@ public:
     virtual ~Column() = default;
     virtual ColumnType GetType() const = 0;
     virtual size_t Size() const = 0;
-    virtual void Add(const std::string& value) = 0;
+    virtual void Add(const std::string& value) = 0;  // TODO: DO NOT USE IN REAL CODE
     virtual void AddView(std::string_view value) = 0;
     virtual void AddBatch(const VectorOfStrings2D& batch, size_t j) = 0;
     virtual uint64_t WriteToFile(std::ofstream& file) = 0;
-    virtual std::string GetDataAsString(size_t index) const = 0;
-    virtual void SerializeValue(size_t index, std::string& buffer) const = 0;
+    virtual std::string GetDataAsString(size_t index) const = 0;  // TODO: DO NOT USE IN REAL CODE
+    virtual const void* GetRawData() const = 0;
+    virtual void SerializeValue(size_t index,
+                                std::string& buffer) const = 0;  // TODO: DO NOT USE IN REAL CODE
     virtual void SerializeBatch(std::vector<std::string>& keys,
-                                const std::vector<uint32_t>* selection = nullptr) const = 0;
+                                const std::vector<size_t>* selection = nullptr) const = 0;
     virtual void ReadFromRawData(const std::vector<char>& buffer) = 0;
     virtual std::shared_ptr<Column> CloneEmpty() const = 0;
-    virtual void CopyFrom(const Column& other, size_t index) = 0;
-    virtual void CopyBatchFrom(const Column& other, const std::vector<uint32_t>* indices = nullptr) = 0;
-    virtual int CompareAt(size_t index_a, const Column& other, size_t index_b) const = 0;
+    virtual void CopyFrom(const Column& other, size_t index) = 0;  // TODO: DO NOT USE IN REAL CODE
+    virtual void CopyBatchFrom(const Column& other,
+                               const std::vector<size_t>* indices = nullptr) = 0;
     virtual void Clear() = 0;
 };
 
@@ -182,6 +184,7 @@ template <typename T>
 class NumericColumn : public Column {
 public:
     using ValueType = T;
+    using ContainerType = std::vector<ValueType>;
 
     ColumnType GetType() const override {
         return ColumnTypeTraits<T>::kType;
@@ -225,11 +228,16 @@ public:
         return ToString(data_[index]);
     }
 
+    const void* GetRawData() const override {
+        return &data_;
+    }
+
     void SerializeValue(size_t index, std::string& buffer) const override {
         buffer.append(reinterpret_cast<const char*>(&data_[index]), sizeof(T));
     }
 
-    void SerializeBatch(std::vector<std::string>& keys, const std::vector<uint32_t>* selection = nullptr) const override {
+    void SerializeBatch(std::vector<std::string>& keys,
+                        const std::vector<size_t>* selection = nullptr) const override {
         if (!selection) {
             size_t n = data_.size();
             keys.reserve(n);
@@ -263,7 +271,7 @@ public:
         data_.push_back(static_cast<const NumericColumn<T>&>(other).GetData()[index]);
     }
 
-    void CopyBatchFrom(const Column& other, const std::vector<uint32_t>* indices = nullptr) override {
+    void CopyBatchFrom(const Column& other, const std::vector<size_t>* indices = nullptr) override {
         const auto& other_data = static_cast<const NumericColumn<T>&>(other).GetData();
         if (!indices) {
             data_.insert(data_.end(), other_data.begin(), other_data.end());
@@ -275,18 +283,6 @@ public:
         }
     }
 
-    int CompareAt(size_t index_a, const Column& other, size_t index_b) const override {
-        T a = data_[index_a];
-        T b = static_cast<const NumericColumn<T>&>(other).GetData()[index_b];
-        if (a < b) {
-            return -1;
-        }
-        if (a > b) {
-            return 1;
-        }
-        return 0;
-    }
-
     void Clear() override {
         data_.clear();
     }
@@ -296,7 +292,7 @@ public:
     }
 
 private:
-    std::vector<T> data_;
+    ContainerType data_;
 };
 
 using Int16Column = NumericColumn<int16_t>;
@@ -310,6 +306,7 @@ using LongDoubleColumn = NumericColumn<long double>;
 class CharColumn : public Column {
 public:
     using ValueType = char;
+    using ContainerType = std::vector<ValueType>;
 
     ColumnType GetType() const override {
         return ColumnType::CHAR;
@@ -355,7 +352,8 @@ public:
         buffer.push_back(data_[index]);
     }
 
-    void SerializeBatch(std::vector<std::string>& keys, const std::vector<uint32_t>* selection = nullptr) const override {
+    void SerializeBatch(std::vector<std::string>& keys,
+                        const std::vector<size_t>* selection = nullptr) const override {
         size_t n = !selection ? data_.size() : selection->size();
         for (size_t i = 0; i < n; ++i) {
             size_t idx = !selection ? i : (*selection)[i];
@@ -368,6 +366,10 @@ public:
         data_.insert(data_.end(), buffer.begin(), buffer.end());
     }
 
+    const void* GetRawData() const override {
+        return data_.data();
+    }
+
     std::shared_ptr<Column> CloneEmpty() const override {
         return std::make_shared<CharColumn>();
     }
@@ -376,7 +378,7 @@ public:
         data_.push_back(static_cast<const CharColumn&>(other).GetData()[index]);
     }
 
-    void CopyBatchFrom(const Column& other, const std::vector<uint32_t>* indices = nullptr) override {
+    void CopyBatchFrom(const Column& other, const std::vector<size_t>* indices = nullptr) override {
         const auto& other_data = static_cast<const CharColumn&>(other).GetData();
         if (!indices) {
             data_.insert(data_.end(), other_data.begin(), other_data.end());
@@ -388,28 +390,16 @@ public:
         }
     }
 
-    int CompareAt(size_t index_a, const Column& other, size_t index_b) const override {
-        char a = data_[index_a];
-        char b = static_cast<const CharColumn&>(other).GetData()[index_b];
-        if (a < b) {
-            return -1;
-        }
-        if (a > b) {
-            return 1;
-        }
-        return 0;
-    }
-
     void Clear() override {
         data_.clear();
     }
 
-    const std::vector<char>& GetData() const {
+    const ContainerType& GetData() const {
         return data_;
     }
 
 private:
-    std::vector<char> data_;
+    ContainerType data_;
 };
 
 // OPTIMIZE: perf decreased because i made VectorOfStrings logic and moved this logic into a
@@ -417,6 +407,7 @@ private:
 class StringColumn : public Column {
 public:
     using ValueType = std::string;
+    using ContainerType = VectorOfStrings;
 
     ColumnType GetType() const override {
         return ColumnType::STRING;
@@ -478,6 +469,10 @@ public:
         return std::string{data_[index]};
     }
 
+    const void* GetRawData() const override {
+        return &data_;
+    }
+
     void SerializeValue(size_t index, std::string& buffer) const override {
         std::string_view val = data_[index];
         uint32_t len = val.size();
@@ -485,7 +480,8 @@ public:
         buffer.append(val.data(), val.size());
     }
 
-    void SerializeBatch(std::vector<std::string>& keys, const std::vector<uint32_t>* selection = nullptr) const override {
+    void SerializeBatch(std::vector<std::string>& keys,
+                        const std::vector<size_t>* selection = nullptr) const override {
         if (!selection) {
             size_t n = data_.Size();
             keys.reserve(n);
@@ -529,7 +525,7 @@ public:
         data_.PushBack(static_cast<const StringColumn&>(other).data_[index]);
     }
 
-    void CopyBatchFrom(const Column& other, const std::vector<uint32_t>* indices = nullptr) override {
+    void CopyBatchFrom(const Column& other, const std::vector<size_t>* indices = nullptr) override {
         const auto& other_data = static_cast<const StringColumn&>(other).data_;
         if (!indices) {
             for (size_t i = 0; i < other_data.Size(); ++i) {
@@ -542,29 +538,16 @@ public:
         }
     }
 
-    int CompareAt(size_t index_a, const Column& other, size_t index_b) const override {
-        std::string_view a = data_[index_a];
-        std::string_view b = static_cast<const StringColumn&>(other).data_[index_b];
-        int cmp = a.compare(b);
-        if (cmp < 0) {
-            return -1;
-        }
-        if (cmp > 0) {
-            return 1;
-        }
-        return 0;
-    }
-
     void Clear() override {
         data_.Clear();
     }
 
-    const VectorOfStrings& GetData() {
+    const ContainerType& GetData() const {
         return data_;
     }
 
 private:
-    VectorOfStrings data_;
+    ContainerType data_;
 
     void EnsureCapacity(size_t data_size, size_t elements) {
         size_t required_sz = data_.DataSize() + data_size;
@@ -587,6 +570,7 @@ template <typename Derived, typename T, ColumnType CType>
 class TemporalColumn : public Column {
 public:
     using ValueType = T;
+    using ContainerType = std::vector<ValueType>;
 
     ColumnType GetType() const override {
         return CType;
@@ -631,12 +615,16 @@ public:
         return Derived::Format(data_[index]);
     }
 
+    const void* GetRawData() const override {
+        return &data_;
+    }
+
     void SerializeValue(size_t index, std::string& buffer) const override {
         buffer.append(reinterpret_cast<const char*>(&data_[index]), sizeof(T));
     }
 
     void SerializeBatch(std::vector<std::string>& keys,
-                        const std::vector<uint32_t>* selection = nullptr) const override {
+                        const std::vector<size_t>* selection = nullptr) const override {
         size_t n = !selection ? data_.size() : selection->size();
         for (size_t i = 0; i < n; ++i) {
             size_t idx = !selection ? i : (*selection)[i];
@@ -662,8 +650,9 @@ public:
             static_cast<const TemporalColumn<Derived, T, CType>&>(other).GetData()[index]);
     }
 
-    void CopyBatchFrom(const Column& other, const std::vector<uint32_t>* indices = nullptr) override {
-        const auto& other_data = static_cast<const TemporalColumn<Derived, T, CType>&>(other).GetData();
+    void CopyBatchFrom(const Column& other, const std::vector<size_t>* indices = nullptr) override {
+        const auto& other_data =
+            static_cast<const TemporalColumn<Derived, T, CType>&>(other).GetData();
         if (!indices) {
             data_.insert(data_.end(), other_data.begin(), other_data.end());
         } else {
@@ -674,28 +663,16 @@ public:
         }
     }
 
-    int CompareAt(size_t index_a, const Column& other, size_t index_b) const override {
-        T a = data_[index_a];
-        T b = static_cast<const TemporalColumn<Derived, T, CType>&>(other).GetData()[index_b];
-        if (a < b) {
-            return -1;
-        }
-        if (a > b) {
-            return 1;
-        }
-        return 0;
-    }
-
     void Clear() override {
         data_.clear();
     }
 
-    const std::vector<T>& GetData() const {
+    const ContainerType& GetData() const {
         return data_;
     }
 
 private:
-    std::vector<T> data_;
+    ContainerType data_;
 };
 
 class DateColumn : public TemporalColumn<DateColumn, int32_t, ColumnType::DATE> {

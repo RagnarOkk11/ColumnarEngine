@@ -35,13 +35,14 @@ public:
         }
 
         for (const std::unique_ptr<RecordBatch>& batch : batches_) {
-            if (batch->columns.empty()) {
+            if (batch->columns.empty() || batch->num_rows == 0) {
                 continue;
             }
-            size_t rows = batch->columns[0]->Size();
+            size_t rows = batch->num_rows;
             for (size_t i = 0; i < rows; ++i) {
+                size_t ind = batch->selection_vector ? (*batch->selection_vector)[i] : i;
                 for (const std::shared_ptr<Column>& column : batch->columns) {
-                    std::cout << column->GetDataAsString(i) << " ";
+                    std::cout << column->GetDataAsString(ind) << " ";
                 }
                 std::cout << "\n";
             }
@@ -82,11 +83,20 @@ public:
         return DataFrame(filter_node);
     }
 
-    DataFrame OrderBy(std::vector<std::pair<std::string, bool>> order_by_columns) {
+    DataFrame OrderBy(std::vector<std::pair<std::string, bool>> order_by_columns,
+                      std::optional<size_t> limit = std::nullopt) {
         auto order_by_node = std::make_shared<OrderByNode>();
         order_by_node->child = logical_plan_;
         order_by_node->order_by_columns = std::move(order_by_columns);
+        order_by_node->limit = limit;
         return DataFrame(order_by_node);
+    }
+
+    DataFrame Limit(size_t limit) {
+        auto limit_node = std::make_shared<LimitNode>();
+        limit_node->child = logical_plan_;
+        limit_node->limit = limit;
+        return DataFrame(limit_node);
     }
 
     DataResult Collect() {

@@ -137,10 +137,10 @@ public:
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
-#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE)                      \
-    case ColumnType::ENUM_VAL:                                          \
-        output_schema.AddColumn(GetOutputName(), ColumnType::ENUM_VAL); \
-        return std::make_unique<MaxAggregationFunction<CLASS_TYPE>>(column_ind);
+#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE)                               \
+    case ColumnType::ENUM_VAL:                                                   \
+        output_schema.AddColumn(GetOutputName(), ColumnType::ENUM_VAL);          \
+        return std::make_unique<MaxAggregationFunction<CLASS_TYPE>>(column_ind); \
         // END_HANDLE_TYPE
 
         switch (column_type) {

@@ -20,7 +20,7 @@ class FilterFunction;
 
 struct RecordBatch {
     size_t num_rows;
-    std::shared_ptr<const std::vector<uint32_t>> selection_vector;
+    std::shared_ptr<const std::vector<size_t>> selection_vector;
     std::vector<std::shared_ptr<Column>> columns;
 };
 
@@ -33,54 +33,9 @@ public:
 
 class ScanOperator : public Operator {
 public:
-    ScanOperator(const std::string& table_path, const std::vector<std::string>& column_names)
-        : reader_(table_path) {
-        const std::vector<ColumnMetadata>& metadata = reader_.GetMetadata();
+    ScanOperator(const std::string& table_path, const std::vector<std::string>& column_names);
 
-        if (column_names.empty()) {
-            for (size_t i = 0; i < metadata.size(); ++i) {
-                column_indices_.push_back(i);
-            }
-        } else {
-            for (const auto& name : column_names) {
-                bool found = false;
-                for (size_t i = 0; i < metadata.size(); ++i) {
-                    if (metadata[i].name == name) {
-                        column_indices_.push_back(i);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    THROW_RUNTIME_ERROR("Column " + name + " not found in metadata");
-                }
-            }
-        }
-
-        if (!metadata.empty()) {
-            total_chunks_ = metadata[0].offsets.size();
-        }
-    }
-
-    std::unique_ptr<RecordBatch> Run() override {
-        if (current_chunk_ >= total_chunks_) {
-            return nullptr;
-        }
-
-        auto record_batch = std::make_unique<RecordBatch>();
-        record_batch->num_rows = 0;
-
-        for (size_t col_idx : column_indices_) {
-            std::shared_ptr<Column> column_data = reader_.GetColumnData(col_idx, current_chunk_);
-            if (record_batch->num_rows == 0) {
-                record_batch->num_rows = column_data->Size();
-            }
-            record_batch->columns.push_back(std::move(column_data));
-        }
-
-        ++current_chunk_;
-        return record_batch;
-    }
+    std::unique_ptr<RecordBatch> Run() override;
 
 private:
     ColumnarReader reader_;
@@ -135,17 +90,31 @@ private:
 class OrderByOperator : public Operator {
 public:
     OrderByOperator(std::unique_ptr<Operator> child,
-                    std::vector<std::pair<size_t, bool>> sort_columns);
+                    std::vector<std::pair<size_t, bool>> sort_columns,
+                    std::optional<uint32_t> limit);
 
     std::unique_ptr<RecordBatch> Run() override;
 
 private:
     std::unique_ptr<Operator> child_;
     std::vector<std::pair<size_t, bool>> sort_columns_;
-    bool accumulated_ = false;
     std::unique_ptr<RecordBatch> accumulated_batch_;
-    std::vector<uint32_t> indices_;
+    std::vector<size_t> indices_;
     size_t current_idx_ = 0;
+    std::optional<size_t> limit_;
+    bool accumulated_ = false;
+};
+
+class LimitOperator : public Operator {
+public:
+    LimitOperator(std::unique_ptr<Operator> child, size_t limit);
+
+    std::unique_ptr<RecordBatch> Run() override;
+
+private:
+    std::unique_ptr<Operator> child_;
+    size_t limit_;
+    size_t cur_rows_ = 0;
 };
 
 #endif  // COLUMNAR_ENGINE_OPERATORS_BASE_H

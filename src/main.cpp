@@ -18,7 +18,7 @@ public:
     // SELECT COUNT(*) FROM hits WHERE AdvEngineID <> 0;
     void Query01() {
         auto df = DataFrame::Select(columnar_file_path_, {})
-                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
+                      .Filter(NotEq("AdvEngineID", 0))
                       .Aggregate({}, {Count()})
                       .Collect();
 
@@ -76,9 +76,160 @@ public:
     // COUNT(*) DESC;
     void Query07() {
         auto df = DataFrame::Select(columnar_file_path_, {"AdvEngineID"})
-                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
+                      .Filter(NotEq("AdvEngineID", 0))
                       .Aggregate({"AdvEngineID"}, {Count()})
                       .OrderBy({{"count", true}})
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT RegionID, COUNT(DISTINCT UserID) AS u FROM hits GROUP BY RegionID ORDER BY u DESC
+    // LIMIT 10;
+    void Query08() {
+        auto df = DataFrame::Select(columnar_file_path_, {"RegionID", "UserID"})
+                      .Aggregate({"RegionID"}, {DistinctCount("UserID", "u")})
+                      .OrderBy({{"u", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT RegionID, SUM(AdvEngineID), COUNT(*) AS c, AVG(ResolutionWidth), COUNT(DISTINCT
+    // UserID) FROM hits GROUP BY RegionID ORDER BY c DESC LIMIT 10;
+    void Query09() {
+        auto df = DataFrame::Select(columnar_file_path_,
+                                    {"RegionID", "AdvEngineID", "ResolutionWidth", "UserID"})
+                      .Aggregate({"RegionID"}, {Sum("AdvEngineID"), Count("*", "c"),
+                                                Avg("ResolutionWidth"), DistinctCount("UserID")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT MobilePhoneModel, COUNT(DISTINCT UserID) AS u FROM hits WHERE MobilePhoneModel <> ''
+    // GROUP BY MobilePhoneModel ORDER BY u DESC LIMIT 10;
+    void Query10() {
+        auto df = DataFrame::Select(columnar_file_path_, {"MobilePhoneModel", "UserID"})
+                      .Filter(NotEq("MobilePhoneModel", ""))
+                      .Aggregate({"MobilePhoneModel"}, {DistinctCount("UserID", "u")})
+                      .OrderBy({{"u", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT MobilePhone, MobilePhoneModel, COUNT(DISTINCT UserID) AS u FROM hits WHERE
+    // MobilePhoneModel <> '' GROUP BY MobilePhone, MobilePhoneModel ORDER BY u DESC LIMIT 10;
+    void Query11() {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {"MobilePhone", "MobilePhoneModel", "UserID"})
+                .Filter(NotEq("MobilePhoneModel", ""))
+                .Aggregate({"MobilePhone", "MobilePhoneModel"}, {DistinctCount("UserID", "u")})
+                .OrderBy({{"u", true}}, 10)
+                .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase <> '' GROUP BY SearchPhrase
+    // ORDER BY c DESC LIMIT 10;
+    void Query12() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Aggregate({"SearchPhrase"}, {Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase, COUNT(DISTINCT UserID) AS u FROM hits WHERE SearchPhrase <> '' GROUP BY
+    // SearchPhrase ORDER BY u DESC LIMIT 10;
+    void Query13() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "UserID"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Aggregate({"SearchPhrase"}, {DistinctCount("UserID", "u")})
+                      .OrderBy({{"u", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchEngineID, SearchPhrase, COUNT(*) AS c FROM hits WHERE SearchPhrase <> '' GROUP
+    // BY SearchEngineID, SearchPhrase ORDER BY c DESC LIMIT 10;
+    void Query14() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchEngineID", "SearchPhrase"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Aggregate({"SearchEngineID", "SearchPhrase"}, {Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT UserID, COUNT(*) FROM hits GROUP BY UserID ORDER BY COUNT(*) DESC LIMIT 10;
+    void Query15() {
+        auto df = DataFrame::Select(columnar_file_path_, {"UserID"})
+                      .Aggregate({"UserID"}, {Count("*")})
+                      .OrderBy({{"count", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase ORDER BY
+    // COUNT(*) DESC LIMIT 10;
+    void Query16() {
+        auto df = DataFrame::Select(columnar_file_path_, {"UserID", "SearchPhrase"})
+                      .Aggregate({"UserID", "SearchPhrase"}, {Count("*")})
+                      .OrderBy({{"count", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT UserID, SearchPhrase, COUNT(*) FROM hits GROUP BY UserID, SearchPhrase LIMIT 10;
+    void Query17() {
+        auto df = DataFrame::Select(columnar_file_path_, {"UserID", "SearchPhrase"})
+                      .Aggregate({"UserID", "SearchPhrase"}, {Count("*")})
+                      .Limit(10)
+                      .Collect();
+        df.Display();
+    }
+
+    // TODO: 18
+
+    // SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) FROM hits GROUP BY
+    // UserID, m, SearchPhrase ORDER BY COUNT(*) DESC LIMIT 10;
+    void Query18() {
+    }
+
+    // SELECT UserID FROM hits WHERE UserID = 435090932899640449;
+    void Query19() {
+        auto df = DataFrame::Select(columnar_file_path_, {"UserID"})
+                      .Filter(Eq("UserID", 435090932899640449))
+                      .Aggregate({"UserID"}, {Count("*")})
+                      .Collect();
+    }
+
+    // TODO: 20-23
+
+    // SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime LIMIT 10;
+    void Query24() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "EventTime"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .OrderBy({{"EventTime", false}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY SearchPhrase LIMIT 10;
+    void Query25() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .OrderBy({{"SearchPhrase", false}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime, SearchPhrase LIMIT
+    // 10;
+    void Query26() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "EventTime"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .OrderBy({{"EventTime", false}, {"SearchPhrase", false}}, 10)
                       .Collect();
         df.Display();
     }
@@ -93,6 +244,23 @@ public:
             case 5: Query05(); break;
             case 6: Query06(); break;
             case 7: Query07(); break;
+            case 8: Query08(); break;
+            case 9: Query09(); break;
+            case 10: Query10(); break;
+            case 11: Query11(); break;
+            case 12: Query12(); break;
+            case 13: Query13(); break;
+            case 14: Query14(); break;
+            case 15: Query15(); break;
+            case 16: Query16(); break;
+            case 17: Query17(); break;
+            // TODO: 18
+            case 19: Query19(); break;
+            // TODO: 20-23
+            case 24: Query24(); break;
+            case 25: Query25(); break;
+            case 26: Query26(); break;
+
             default: THROW_RUNTIME_ERROR("Unknown query number: " + std::to_string(query_number));
         }
     }

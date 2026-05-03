@@ -42,6 +42,12 @@ struct FilterNode : public PlanNode {
 struct OrderByNode : public PlanNode {
     std::shared_ptr<PlanNode> child;
     std::vector<std::pair<std::string, bool>> order_by_columns;
+    std::optional<size_t> limit;
+};
+
+struct LimitNode : public PlanNode {
+    std::shared_ptr<PlanNode> child;
+    size_t limit;
 };
 
 struct PhysicalOperatorContext {
@@ -164,6 +170,11 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
     if (auto filter = std::dynamic_pointer_cast<FilterNode>(plan_node)) {
         std::vector<std::string> needed_columns;
         filter->filter_expression->CollectRequiredColumns(needed_columns);
+        if (required_columns.has_value()) {
+            needed_columns.insert(needed_columns.end(), required_columns->begin(),
+                                  required_columns->end());
+        }
+
         std::sort(needed_columns.begin(), needed_columns.end());
         needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                              needed_columns.end());
@@ -177,17 +188,34 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
     }
 
     if (auto order_by = std::dynamic_pointer_cast<OrderByNode>(plan_node)) {
-        PhysicalOperatorContext child_context =
-            BuildPhysicalPlan(order_by->child, required_columns);
+        std::vector<std::string> needed_columns;
+        if (required_columns.has_value()) {
+            needed_columns = required_columns.value();
+        }
+        for (const auto& [col_name, is_desc] : order_by->order_by_columns) {
+            needed_columns.push_back(col_name);
+        }
+        std::sort(needed_columns.begin(), needed_columns.end());
+        needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
+                             needed_columns.end());
 
+        PhysicalOperatorContext child_context = BuildPhysicalPlan(order_by->child, needed_columns);
         std::vector<std::pair<size_t, bool>> sort_columns;
         for (const auto& [col_name, is_desc] : order_by->order_by_columns) {
             size_t sort_col_idx = child_context.schema.GetColumnIndexByName(col_name);
             sort_columns.push_back({sort_col_idx, is_desc});
         }
 
-        auto op = std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
-                                                    std::move(sort_columns));
+        auto op =
+            std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
+                                              std::move(sort_columns), std::move(order_by->limit));
+        return {std::move(op), std::move(child_context.schema)};
+    }
+
+    if (auto limit = std::dynamic_pointer_cast<LimitNode>(plan_node)) {
+        PhysicalOperatorContext child_context = BuildPhysicalPlan(limit->child, required_columns);
+        auto op =
+            std::make_unique<LimitOperator>(std::move(child_context.root_operator), limit->limit);
         return {std::move(op), std::move(child_context.schema)};
     }
 
