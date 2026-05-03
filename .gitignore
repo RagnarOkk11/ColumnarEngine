@@ -26,6 +26,7 @@ report.txt
 docker-test
 docker-test-results
 .vscode/
+src/project_bundle.txt
 
 
 # Prerequisites
