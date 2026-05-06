@@ -28,7 +28,6 @@ docker-test-results
 .vscode/
 src/project_bundle.txt
 
-
 # Prerequisites
 *.d
 

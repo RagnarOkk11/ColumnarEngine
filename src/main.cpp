@@ -1,5 +1,5 @@
-#include "CSVToColumnar.h"
-#include "ExecutionAPI.h"
+#include "io/CsvToColumnar.h"
+#include "execution/ExecutionApi.h"
 
 #include <chrono>
 
@@ -189,11 +189,15 @@ public:
         df.Display();
     }
 
-    // TODO: 18
-
     // SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) FROM hits GROUP BY
     // UserID, m, SearchPhrase ORDER BY COUNT(*) DESC LIMIT 10;
     void Query18() {
+        auto df = DataFrame::Select(columnar_file_path_, {})
+                      .Project({ExtractMinute("EventTime", "m")})
+                      .Aggregate({"UserID", "m", "SearchPhrase"}, {Count()})
+                      .OrderBy({{"count", true}}, 10)
+                      .Collect();
+        df.Display();
     }
 
     // SELECT UserID FROM hits WHERE UserID = 435090932899640449;
@@ -204,7 +208,11 @@ public:
                       .Collect();
     }
 
-    // TODO: 20-23
+    // SELECT COUNT(*) FROM hits WHERE URL LIKE '%google%';
+    void Query20() {
+    }
+
+    // TODO: 21-23
 
     // SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime LIMIT 10;
     void Query24() {
@@ -254,7 +262,7 @@ public:
             case 15: Query15(); break;
             case 16: Query16(); break;
             case 17: Query17(); break;
-            // TODO: 18
+            case 18: Query18(); break;
             case 19: Query19(); break;
             // TODO: 20-23
             case 24: Query24(); break;
@@ -288,8 +296,7 @@ int main(int argc, char** argv) {
         try {
             std::cerr << "Converting CSV to columnar format...\n";
             const auto start = std::chrono::steady_clock::now();
-            CSVToColumnar converter;
-            converter.ConvertWithSchema(argv[2], argv[3], argv[4]);
+            CsvToColumnar::ConvertWithSchema(argv[2], argv[3], argv[4]);
             const auto time =
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() *
                 1000;
