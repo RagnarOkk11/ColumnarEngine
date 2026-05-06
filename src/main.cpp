@@ -210,9 +210,49 @@ public:
 
     // SELECT COUNT(*) FROM hits WHERE URL LIKE '%google%';
     void Query20() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Filter(Like("URL", "%google%"))
+                      .Aggregate({}, {Count()})
+                      .Collect();
+        df.Display();
     }
 
-    // TODO: 21-23
+    // SELECT SearchPhrase, MIN(URL), COUNT(*) AS c FROM hits WHERE URL LIKE '%google%' AND
+    // SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;
+    void Query21() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "URL"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Filter(Like("URL", "%google%"))
+                      .Aggregate({"SearchPhrase"}, {Min("URL"), Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase, MIN(URL), MIN(Title), COUNT(*) AS c, COUNT(DISTINCT UserID) FROM hits
+    // WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> '' GROUP BY
+    // SearchPhrase ORDER BY c DESC LIMIT 10;
+    void Query22() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "URL", "Title", "UserID"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Filter(Like("Title", "%Google%"))
+                      .Filter(NotLike("URL", "%.google.%"))
+                      .Aggregate({"SearchPhrase"}, {Min("URL"), Min("Title"), Count("*", "c"),
+                                                    DistinctCount("UserID")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // TODO: support SELECT *
+    // SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10;
+    void Query23() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL", "EventTime"})
+                      .Filter(Like("URL", "%google%"))
+                      .OrderBy({{"EventTime", false}}, 10)
+                      .Collect();
+        df.Display();
+    }
 
     // SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime LIMIT 10;
     void Query24() {
@@ -264,7 +304,10 @@ public:
             case 17: Query17(); break;
             case 18: Query18(); break;
             case 19: Query19(); break;
-            // TODO: 20-23
+            case 20: Query20(); break;
+            case 21: Query21(); break;
+            case 22: Query22(); break;
+            case 23: Query23(); break;
             case 24: Query24(); break;
             case 25: Query25(); break;
             case 26: Query26(); break;

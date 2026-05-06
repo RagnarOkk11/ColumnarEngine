@@ -110,12 +110,12 @@ public:
 
     NumericColumn() = default;
     NumericColumn(const ContainerType& data) : data_(data) {}
-    NumericColumn(ContainerType&& data) : data_(std::move(data)) {}
+    NumericColumn(ContainerType&& data) noexcept : data_(std::move(data)) {}
     NumericColumn operator=(const ContainerType& data) {
         data_ = data;
         return *this;
     }
-    NumericColumn operator=(ContainerType&& data) {
+    NumericColumn operator=(ContainerType&& data) noexcept {
         data_ = std::move(data);
         return *this;
     }

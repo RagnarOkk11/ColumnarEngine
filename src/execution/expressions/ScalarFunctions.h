@@ -1,7 +1,7 @@
 #pragma once
 
 #include "execution/OperatorsBase.h"
-#include "execution/ExecutionHelper.h"
+#include "execution/expressions/AggExpHelper.h"
 #include "column/TemporalColumn.h"
 #include "column/NumericColumn.h"
 
@@ -21,7 +21,7 @@ public:
         std::vector<int32_t> result_data;
         result_data.reserve(batch.num_rows);
 
-        ExecutionHelper::IterateColumnData<TimestampColumn>(batch, col_ind_, [&](const auto& value, size_t, size_t) {
+        AggExpHelper::IterateColumnData<TimestampColumn>(batch, col_ind_, [&](const auto& value, size_t, size_t) {
             result_data.push_back(Timestamp::ExtractMinute(value));
         });
 

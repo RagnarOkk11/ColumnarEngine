@@ -15,23 +15,6 @@
 
 class ExecutionHelper {
 public:
-    template <typename ColumnType, typename Func>
-    static void IterateColumnData(const RecordBatch& batch, size_t column_index, Func&& func) {
-        auto* column = static_cast<const ColumnType*>(batch.columns[column_index].get());
-        const auto& data = column->GetData();
-
-        if (!batch.selection_vector) {
-            for (size_t i = 0; i < batch.num_rows; ++i) {
-                func(data[i], i, i);
-            }
-        } else {
-            const auto& sel = *batch.selection_vector;
-            for (size_t i = 0; i < batch.num_rows; ++i) {
-                func(data[sel[i]], i, sel[i]);
-            }
-        }
-    }
-
     static std::string FormatValue(const Column& col, size_t index) {
         ColumnType type = col.GetType();
         if (type == ColumnType::STRING) {

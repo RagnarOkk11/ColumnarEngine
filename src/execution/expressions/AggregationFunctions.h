@@ -1,6 +1,6 @@
 #pragma once
 
-#include "execution/ExecutionHelper.h"
+#include "execution/expressions/AggExpHelper.h"
 #include "execution/OperatorsBase.h"
 
 #include "column/Column.h"
@@ -12,7 +12,6 @@
 #include <memory>
 #include <unordered_set>
 #include <vector>
-#include <limits>
 
 class GlobalAggregationFunction {
 public:
@@ -47,13 +46,15 @@ DEFINE_AGG_TRAIT(Int128Column, Int128, Int128, Int128Column);
 DEFINE_AGG_TRAIT(FloatColumn, float, double, DoubleColumn);
 DEFINE_AGG_TRAIT(DoubleColumn, double, long double, LongDoubleColumn);
 DEFINE_AGG_TRAIT(LongDoubleColumn, long double, long double, LongDoubleColumn);
-DEFINE_AGG_TRAIT(CharColumn, char, int16_t, Int16Column);
+DEFINE_AGG_TRAIT(CharColumn, char, char, CharColumn);
 DEFINE_AGG_TRAIT(DateColumn, int32_t, int32_t, DateColumn);
 DEFINE_AGG_TRAIT(TimestampColumn, int64_t, int64_t, TimestampColumn);
 
 template <>
 struct AggregationFunctionTraits<StringColumn> {
     using ValueType = std::string;
+    using StateType = std::string;
+    using ResultColumnType = StringColumn;
 };
 
 #undef DEFINE_AGG_TRAIT
@@ -76,10 +77,6 @@ struct MaxOperation {
             result = value;
         }
     }
-    template <typename ResultType>
-    static constexpr ResultType GetInitValue() {
-        return std::numeric_limits<ResultType>::lowest();
-    }
 };
 
 struct MinOperation {
@@ -88,10 +85,6 @@ struct MinOperation {
         if (value < result) {
             result = value;
         }
-    }
-    template <typename ResultType>
-    static constexpr ResultType GetInitValue() {
-        return std::numeric_limits<ResultType>::max();
     }
 };
 
@@ -102,19 +95,36 @@ class TypedGlobalAggregationFunction : public GlobalAggregationFunction {
 
 public:
     explicit TypedGlobalAggregationFunction(size_t column_index) : column_index_(column_index) {
-        state_ = Operation::template GetInitValue<StateType>();
+        if constexpr (requires { Operation::template GetInitValue<StateType>(); }) {
+            state_ = Operation::template GetInitValue<StateType>();
+        } else {
+            state_ = StateType{};
+        }
     }
 
     void Update(const RecordBatch& batch) override {
-        ExecutionHelper::IterateColumnData<ColumnType>(batch, column_index_, [&](const auto& value, size_t, size_t) {
-            Operation::Apply(state_, value);
-        });
-        has_data_ = true;
+        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+                                                    [&](const auto& value, size_t, size_t) {
+                                                        if (!has_data_) {
+                                                            state_ = value;
+                                                            has_data_ = true;
+                                                        } else {
+                                                            Operation::Apply(state_, value);
+                                                        }
+                                                    });
     }
 
     std::shared_ptr<Column> Finalize() override {
         auto result_column = std::make_shared<ResultColumnType>();
-        result_column->AddValue(has_data_ ? state_ : Operation::template GetInitValue<StateType>());
+        if (has_data_) {
+            result_column->AddValue(state_);
+        } else {
+            if constexpr (requires { Operation::template GetInitValue<StateType>(); }) {
+                result_column->AddValue(Operation::template GetInitValue<StateType>());
+            } else {
+                result_column->AddValue(StateType{});
+            }
+        }
         return result_column;
     }
 
@@ -135,15 +145,22 @@ public:
 
     void Resize(size_t num_groups) override {
         if (num_groups > states_.size()) {
-            states_.resize(num_groups, Operation::template GetInitValue<StateType>());
+            states_.resize(num_groups);
+            has_data_.resize(num_groups, 0);
         }
     }
 
     void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) override {
-        ExecutionHelper::IterateColumnData<ColumnType>(batch, column_index_, [&](const auto& value, size_t row_idx, size_t) {
-            uint32_t gid = group_ids[row_idx];
-            Operation::Apply(states_[gid], value);
-        });
+        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+                                                    [&](const auto& value, size_t row_idx, size_t) {
+                                                        uint32_t gid = group_ids[row_idx];
+                                                        if (!has_data_[gid]) {
+                                                            states_[gid] = value;
+                                                            has_data_[gid] = 1;
+                                                        } else {
+                                                            Operation::Apply(states_[gid], value);
+                                                        }
+                                                    });
     }
 
     std::shared_ptr<Column> Finalize() override {
@@ -157,6 +174,7 @@ public:
 private:
     size_t column_index_;
     std::vector<StateType> states_;
+    std::vector<char> has_data_;
 };
 
 class CountGlobalAggregationFunction : public GlobalAggregationFunction {
@@ -209,10 +227,11 @@ public:
     }
 
     void Update(const RecordBatch& batch) override {
-        ExecutionHelper::IterateColumnData<ColumnType>(batch, column_index_, [&](const auto& value, size_t, size_t) {
-            sum_ += value;
-            ++count_;
-        });
+        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+                                                    [&](const auto& value, size_t, size_t) {
+                                                        sum_ += value;
+                                                        ++count_;
+                                                    });
         has_data_ = true;
     }
 
@@ -248,11 +267,12 @@ public:
     }
 
     void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) override {
-        ExecutionHelper::IterateColumnData<ColumnType>(batch, column_index_, [&](const auto& value, size_t row_idx, size_t) {
-            uint32_t gid = group_ids[row_idx];
-            states_[gid].sum += value;
-            ++states_[gid].count;
-        });
+        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+                                                    [&](const auto& value, size_t row_idx, size_t) {
+                                                        uint32_t gid = group_ids[row_idx];
+                                                        states_[gid].sum += value;
+                                                        ++states_[gid].count;
+                                                    });
     }
 
     std::shared_ptr<Column> Finalize() override {
@@ -287,9 +307,9 @@ public:
     }
 
     void Update(const RecordBatch& batch) override {
-        ExecutionHelper::IterateColumnData<ColumnType>(batch, column_index_, [&](const auto& value, size_t, size_t) {
-            distinct_values_.insert(ValueType(value));
-        });
+        AggExpHelper::IterateColumnData<ColumnType>(
+            batch, column_index_,
+            [&](const auto& value, size_t, size_t) { distinct_values_.insert(ValueType(value)); });
     }
 
     std::shared_ptr<Column> Finalize() override {
@@ -319,10 +339,11 @@ public:
     }
 
     void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) override {
-        ExecutionHelper::IterateColumnData<ColumnType>(batch, column_index_, [&](const auto& value, size_t row_idx, size_t) {
-            uint32_t gid = group_ids[row_idx];
-            distinct_values_[gid].insert(ValueType(value));
-        });
+        AggExpHelper::IterateColumnData<ColumnType>(
+            batch, column_index_, [&](const auto& value, size_t row_idx, size_t) {
+                uint32_t gid = group_ids[row_idx];
+                distinct_values_[gid].insert(ValueType(value));
+            });
     }
 
     std::shared_ptr<Column> Finalize() override {
