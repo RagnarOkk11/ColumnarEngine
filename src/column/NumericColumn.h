@@ -109,15 +109,7 @@ public:
     using ContainerType = std::vector<ValueType>;
 
     NumericColumn() = default;
-    NumericColumn(const ContainerType& data) : data_(data) {}
-    NumericColumn(ContainerType&& data) noexcept : data_(std::move(data)) {}
-    NumericColumn operator=(const ContainerType& data) {
-        data_ = data;
-        return *this;
-    }
-    NumericColumn operator=(ContainerType&& data) noexcept {
-        data_ = std::move(data);
-        return *this;
+    NumericColumn(ContainerType&& data) noexcept : data_(std::move(data)) {
     }
 
     ~NumericColumn() override = default;
@@ -142,10 +134,6 @@ public:
         return data_;
     }
 
-    void AddValue(T value) {
-        data_.push_back(value);
-    }
-    
     void ReadFromBuffer(const std::vector<char>& buffer) {
         if (buffer.size() % sizeof(T) != 0) {
             THROW_RUNTIME_ERROR("Raw buffer size is not aligned with type size");
@@ -162,23 +150,28 @@ private:
 template <typename T>
 class NumericColumnBuilder : public ColumnBuilder {
 public:
-    NumericColumnBuilder() : column_(std::make_shared<NumericColumn<T>>()) {}
+    NumericColumnBuilder() = default;
+
+    void AddValue(T value) {
+        data_.push_back(value);
+    }
 
     void AddBatch(const VectorOfStrings2D& batch, size_t j) override {
         size_t h = batch.Height();
+        data_.reserve(data_.size() + h);
         for (size_t i = 0; i < h; ++i) {
-            column_->AddValue(ColumnTypeTraits<T>::FromString(batch.GetString2D(i, j)));
+            data_.push_back(ColumnTypeTraits<T>::FromString(batch.GetString2D(i, j)));
         }
     }
 
     std::shared_ptr<Column> Finish() override {
-        auto result = column_;
-        column_ = std::make_shared<NumericColumn<T>>();
+        auto result = std::make_shared<NumericColumn<T>>(std::move(data_));
+        data_.clear();
         return result;
     }
 
 private:
-    std::shared_ptr<NumericColumn<T>> column_;
+    std::vector<T> data_;
 };
 
 using Int16Column = NumericColumn<int16_t>;
@@ -196,3 +189,8 @@ using Int128ColumnBuilder = NumericColumnBuilder<Int128>;
 using FloatColumnBuilder = NumericColumnBuilder<float>;
 using DoubleColumnBuilder = NumericColumnBuilder<double>;
 using LongDoubleColumnBuilder = NumericColumnBuilder<long double>;
+
+template <typename T>
+struct BuilderTypeTrait<NumericColumn<T>> {
+    using Type = NumericColumnBuilder<T>;
+};

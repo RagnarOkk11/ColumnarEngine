@@ -11,3 +11,6 @@ public:
     virtual void AddBatch(const VectorOfStrings2D& batch, size_t column_index) = 0;
     virtual std::shared_ptr<Column> Finish() = 0;
 };
+
+template <typename ColumnClass>
+struct BuilderTypeTrait;

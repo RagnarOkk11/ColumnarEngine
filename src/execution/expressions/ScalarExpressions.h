@@ -53,8 +53,35 @@ public:
     }
 };
 
+class LengthExpression : public ScalarExpression {
+public:
+    explicit LengthExpression(std::string column_name, std::string output_name = "")
+        : ScalarExpression(std::move(column_name), std::move(output_name)) {
+    }
+
+    std::string GetOutputName() const override {
+        return output_name_.empty() ? "length_" + column_name_ : output_name_;
+    }
+
+    std::unique_ptr<ScalarFunction> CreateScalarFunction(Schema& child_schema) override {
+        size_t ind = child_schema.GetColumnIndexByName(column_name_);
+        ColumnType type = child_schema.GetColumnTypeByName(column_name_);
+
+        if (type != ColumnType::STRING) [[unlikely]] {
+            THROW_RUNTIME_ERROR("Length requires STRING column");
+        }
+
+        child_schema.AddColumn(GetOutputName(), ColumnType::INT64);
+        return std::make_unique<LengthFunction>(ind);
+    }
+};
+
 inline std::shared_ptr<ScalarExpression> ExtractMinute(std::string column_name,
                                                        std::string output_name = "") {
     return std::make_shared<ExtractMinuteExpression>(std::move(column_name),
                                                      std::move(output_name));
+}
+
+inline std::shared_ptr<ScalarExpression> Length(std::string column_name, std::string output_name = "") {
+    return std::make_shared<LengthExpression>(std::move(column_name), std::move(output_name));
 }

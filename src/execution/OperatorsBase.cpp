@@ -104,11 +104,11 @@ std::unique_ptr<RecordBatch> FilterOperator::Run() {
 
 GroupByOperator::GroupByOperator(std::unique_ptr<Operator> child,
                                  std::vector<size_t> group_by_col_indices,
-                                 std::vector<std::shared_ptr<Column>> empty_key_columns,
+                                 std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
                                  std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs)
     : child_(std::move(child)),
       group_by_col_indices_(std::move(group_by_col_indices)),
-      key_columns_(std::move(empty_key_columns)),
+      key_builders_(std::move(key_builders)),
       agg_funcs_(std::move(agg_funcs)) {
 }
 
@@ -126,7 +126,7 @@ std::unique_ptr<RecordBatch> GroupByOperator::Run() {
             }
 
             std::vector<size_t> new_group_indices;
-            size_t sz = key_columns_.empty() ? 0 : key_columns_[0]->Size();
+            size_t sz = num_groups_;
 
             bool is_filtered = sel_vec != nullptr;
             for (size_t i = 0; i < batch_size; ++i) {
@@ -147,28 +147,26 @@ std::unique_ptr<RecordBatch> GroupByOperator::Run() {
 
             if (!new_group_indices.empty()) {
                 for (size_t k = 0; k < group_by_col_indices_.size(); ++k) {
-                    ExecutionHelper::CopySelection(*key_columns_[k], *batch->columns[group_by_col_indices_[k]], &new_group_indices);
+                    ExecutionHelper::CopySelection(*key_builders_[k], *batch->columns[group_by_col_indices_[k]], &new_group_indices);
                 }
             }
 
-            size_t total_groups = hash_table_.size();
+            num_groups_ = hash_table_.size();
             for (auto& func : agg_funcs_) {
-                func->Resize(total_groups);
+                func->Resize(num_groups_);
                 func->Update(*batch, group_ids);
             }
         }
         accumulated_ = true;
 
-        size_t total_groups = key_columns_.empty() ? 0 : key_columns_[0]->Size();
         auto result_batch = std::make_unique<RecordBatch>();
-        result_batch->num_rows = total_groups;
+        result_batch->num_rows = num_groups_;
 
-        for (size_t k = 0; k < key_columns_.size(); ++k) {
-            result_batch->columns.push_back(std::move(key_columns_[k]));
+        for (size_t k = 0; k < key_builders_.size(); ++k) {
+            result_batch->columns.push_back(key_builders_[k]->Finish());
         }
         for (size_t a = 0; a < agg_funcs_.size(); ++a) {
-            auto full_agg_col = agg_funcs_[a]->Finalize();
-            result_batch->columns.push_back(std::move(full_agg_col));
+            result_batch->columns.push_back(agg_funcs_[a]->Finalize());
         }
         return result_batch;
     }
@@ -190,9 +188,9 @@ struct SortColumnInfo {
     bool is_desc;
 };
 
-template <typename ColumnType>
+template <typename ColumnT>
 int Compare(const void* raw_data, uint32_t a, uint32_t b) {
-    using Container = ColumnType::ContainerType;
+    using Container = ColumnT::ContainerType;
     const Container* data = static_cast<const Container*>(raw_data);
     if ((*data)[a] < (*data)[b]) {
         return -1;
@@ -206,24 +204,32 @@ int Compare(const void* raw_data, uint32_t a, uint32_t b) {
 std::unique_ptr<RecordBatch> OrderByOperator::Run() {
     if (!accumulated_) {
         while (auto batch = child_->Run()) {
-            if (!accumulated_batch_) {
-                accumulated_batch_ = std::make_unique<RecordBatch>();
+            if (accum_builders_.empty()) {
                 size_t sz = batch->columns.size();
                 for (size_t c = 0; c < sz; ++c) {
-                    accumulated_batch_->columns.push_back(ColumnFactory::MakeColumn(batch->columns[c]->GetType()));
+                    accum_builders_.push_back(ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
+                    accum_types_.push_back(batch->columns[c]->GetType());
                 }
-                accumulated_batch_->num_rows = 0;
+                accum_num_rows_ = 0;
             }
 
             const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
-            size_t sz = batch->columns.size();
+            size_t sz = accum_builders_.size();
             for (size_t c = 0; c < sz; ++c) {
-                ExecutionHelper::CopySelection(*accumulated_batch_->columns[c], *batch->columns[c], sel.get());
+                ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
             }
-            accumulated_batch_->num_rows += batch->num_rows;
+            accum_num_rows_ += batch->num_rows;
         }
 
-        if (accumulated_batch_) {
+        if (!accum_builders_.empty()) {
+            // Finish builders into immutable columns for sorting
+            accumulated_batch_ = std::make_unique<RecordBatch>();
+            accumulated_batch_->num_rows = accum_num_rows_;
+            for (auto& builder : accum_builders_) {
+                accumulated_batch_->columns.push_back(builder->Finish());
+            }
+            accum_builders_.clear();
+
             size_t sz = accumulated_batch_->num_rows;
             indices_.reserve(sz);
             for (uint32_t i = 0; i < sz; ++i) {
@@ -272,9 +278,9 @@ std::unique_ptr<RecordBatch> OrderByOperator::Run() {
             auto sorted_batch = std::make_unique<RecordBatch>();
             sorted_batch->num_rows = accumulated_batch_->num_rows;
             for (size_t c = 0; c < accumulated_batch_->columns.size(); ++c) {
-                auto new_col = ColumnFactory::MakeColumn(accumulated_batch_->columns[c]->GetType());
-                ExecutionHelper::CopySelection(*new_col, *accumulated_batch_->columns[c], &indices_);
-                sorted_batch->columns.push_back(std::move(new_col));
+                auto builder = ColumnFactory::MakeColumnBuilder(accumulated_batch_->columns[c]->GetType());
+                ExecutionHelper::CopySelection(*builder, *accumulated_batch_->columns[c], &indices_);
+                sorted_batch->columns.push_back(builder->Finish());
             }
             accumulated_batch_ = std::move(sorted_batch);
 

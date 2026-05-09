@@ -1,6 +1,7 @@
 #pragma once
 
 #include "io/ColumnarReader.h"
+#include "column/ColumnBuilder.h"
 
 #include <memory>
 #include <vector>
@@ -66,7 +67,7 @@ private:
 class GroupByOperator : public Operator {
 public:
     GroupByOperator(std::unique_ptr<Operator> child, std::vector<size_t> group_by_col_indices,
-                    std::vector<std::shared_ptr<Column>> empty_key_columns,
+                    std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
                     std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs);
 
     std::unique_ptr<RecordBatch> Run() override;
@@ -74,9 +75,10 @@ public:
 private:
     std::unique_ptr<Operator> child_;
     std::vector<size_t> group_by_col_indices_;
-    std::vector<std::shared_ptr<Column>> key_columns_;
+    std::vector<std::shared_ptr<ColumnBuilder>> key_builders_;
     std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs_;
     bool accumulated_ = false;
+    size_t num_groups_ = 0;
 
     std::unordered_map<std::string, uint32_t> hash_table_;
 };
@@ -93,6 +95,9 @@ private:
     std::unique_ptr<Operator> child_;
     std::vector<std::pair<size_t, bool>> sort_columns_;
     std::unique_ptr<RecordBatch> accumulated_batch_;
+    std::vector<std::shared_ptr<ColumnBuilder>> accum_builders_;
+    std::vector<ColumnType> accum_types_;
+    size_t accum_num_rows_ = 0;
     std::vector<size_t> indices_;
     size_t current_idx_ = 0;
     std::optional<size_t> limit_;

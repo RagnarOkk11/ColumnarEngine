@@ -142,7 +142,7 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
                     BuildPhysicalPlan(aggregate->child, needed_columns);
 
                 std::vector<size_t> group_col_indices;
-                std::vector<std::shared_ptr<Column>> empty_key_columns;
+                std::vector<std::shared_ptr<ColumnBuilder>> key_builders;
                 Schema output_schema;
 
                 for (const auto& col_name : aggregate->group_by_columns) {
@@ -151,15 +151,7 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
 
                     ColumnType type = child_context.schema.GetColumnTypeByName(col_name);
                     output_schema.AddColumn(col_name, type);
-
-#define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE) \
-        case ColumnType::ENUM_VAL: empty_key_columns.push_back(std::make_shared<CLASS_TYPE>()); break;
-
-                    switch (type) {
-                        FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
-                        default: THROW_NOT_IMPLEMENTED;
-                    }
-#undef HANDLE_TYPE
+                    key_builders.push_back(ColumnFactory::MakeColumnBuilder(type));
                 }
 
                 std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs;
@@ -171,7 +163,7 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
 
                 auto op = std::make_unique<GroupByOperator>(
                     std::move(child_context.root_operator), std::move(group_col_indices),
-                    std::move(empty_key_columns), std::move(agg_funcs));
+                    std::move(key_builders), std::move(agg_funcs));
                 return {std::move(op), std::move(output_schema)};
             }
 

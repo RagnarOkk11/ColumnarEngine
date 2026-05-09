@@ -49,6 +49,7 @@ add_executable(columnar-engine
         types/Date.h
         types/Timestamp.h
         execution/expressions/AggExpHelper.h
+        types/String.h
 )
 
 target_link_libraries(columnar-engine PRIVATE project_includes)

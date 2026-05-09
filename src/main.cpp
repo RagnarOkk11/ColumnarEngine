@@ -2,6 +2,7 @@
 #include "execution/ExecutionApi.h"
 
 #include <chrono>
+#include <sys/stat.h>
 
 class Query {
 public:
@@ -282,6 +283,20 @@ public:
         df.Display();
     }
 
+    // SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL <> '' GROUP BY
+    // CounterID HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;
+    void Query27() {
+        auto df = DataFrame::Select(columnar_file_path_, {"CounterID", "URL"})
+                      .Filter(NotEq("URL", ""))
+                      .Project({Length("URL", "length_URL")})
+                      .Aggregate({"CounterID"}, {Avg("length_URL", "l"), Count("*", "c")})
+                      .Filter(Greater("c", static_cast<int64_t>(100000)))
+                      .OrderBy({{"l", true}}, 25)
+                      .Collect();
+
+        df.Display();
+    }
+
     void RunQuery(int query_number) {
         switch (query_number) {
             case 0: Query00(); break;
@@ -311,6 +326,7 @@ public:
             case 24: Query24(); break;
             case 25: Query25(); break;
             case 26: Query26(); break;
+            case 27: Query27(); break;
 
             default: THROW_RUNTIME_ERROR("Unknown query number: " + std::to_string(query_number));
         }

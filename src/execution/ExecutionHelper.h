@@ -120,15 +120,12 @@ public:
         }
     }
 
-    static void CopySelection(Column& dest, const Column& src,
+    static void CopySelection(ColumnBuilder& dest, const Column& src,
                               const std::vector<size_t>* indices = nullptr) {
         ColumnType type = src.GetType();
-        if (dest.GetType() != type) {
-            THROW_RUNTIME_ERROR("Type mismatch in CopySelection");
-        }
 
         if (type == ColumnType::STRING) {
-            auto& d = static_cast<StringColumn&>(dest);
+            auto& d = static_cast<StringColumnBuilder&>(dest);
             const auto& s = static_cast<const StringColumn&>(src).GetData();
             if (!indices) {
                 for (size_t i = 0; i < s.Size(); ++i) {
@@ -142,7 +139,7 @@ public:
         } else {
 #define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE)                                   \
     case ColumnType::ENUM_VAL: {                                                     \
-        auto& d = static_cast<CLASS_TYPE&>(dest);                                    \
+        auto& d = static_cast<CLASS_TYPE##Builder&>(dest);                           \
         auto* vec = static_cast<const CLASS_TYPE::ContainerType*>(src.GetRawData()); \
         if (!indices) {                                                              \
             for (size_t i = 0; i < vec->size(); ++i) {                               \

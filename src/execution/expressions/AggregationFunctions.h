@@ -9,64 +9,50 @@
 #include "column/StringColumn.h"
 #include "column/TemporalColumn.h"
 
+#include "column/ColumnFactory.h"
+
 #include <memory>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
-class GlobalAggregationFunction {
+class AggregationFunction {
 public:
-    virtual ~GlobalAggregationFunction() = default;
-    virtual void Update(const RecordBatch& batch) = 0;
-    virtual std::shared_ptr<Column> Finalize() = 0;
-};
-
-class GroupedAggregationFunction {
-public:
-    virtual ~GroupedAggregationFunction() = default;
-    virtual void Resize(size_t num_groups) = 0;
-    virtual void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) = 0;
-    virtual std::shared_ptr<Column> Finalize() = 0;
-};
-
-template <typename T>
-struct AggregationFunctionTraits;
-
-#define DEFINE_AGG_TRAIT(COL_TYPE, VAL_TYPE, STATE_TYPE, RES_TYPE) \
-    template <>                                                    \
-    struct AggregationFunctionTraits<COL_TYPE> {                   \
-        using ValueType = VAL_TYPE;                                \
-        using StateType = STATE_TYPE;                              \
-        using ResultColumnType = RES_TYPE;                         \
+    virtual ~AggregationFunction() = default;
+    AggregationFunction(ColumnType column_type) : column_type_(column_type) {
     }
 
-DEFINE_AGG_TRAIT(Int16Column, int16_t, int32_t, Int32Column);
-DEFINE_AGG_TRAIT(Int32Column, int32_t, int64_t, Int64Column);
-DEFINE_AGG_TRAIT(Int64Column, int64_t, Int128, Int128Column);
-DEFINE_AGG_TRAIT(Int128Column, Int128, Int128, Int128Column);
-DEFINE_AGG_TRAIT(FloatColumn, float, double, DoubleColumn);
-DEFINE_AGG_TRAIT(DoubleColumn, double, long double, LongDoubleColumn);
-DEFINE_AGG_TRAIT(LongDoubleColumn, long double, long double, LongDoubleColumn);
-DEFINE_AGG_TRAIT(CharColumn, char, char, CharColumn);
-DEFINE_AGG_TRAIT(DateColumn, int32_t, int32_t, DateColumn);
-DEFINE_AGG_TRAIT(TimestampColumn, int64_t, int64_t, TimestampColumn);
+    std::shared_ptr<Column> Finalize() {
+        auto builder = ColumnFactory::MakeColumnBuilder(column_type_);
+        WriteResult(builder);
+        return builder->Finish();
+    }
 
-template <>
-struct AggregationFunctionTraits<StringColumn> {
-    using ValueType = std::string;
-    using StateType = std::string;
-    using ResultColumnType = StringColumn;
+protected:
+    ColumnType column_type_;
+
+    virtual void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) = 0;
 };
 
-#undef DEFINE_AGG_TRAIT
+class GlobalAggregationFunction : public AggregationFunction {
+public:
+    GlobalAggregationFunction(ColumnType column_type) : AggregationFunction(column_type) {}
+
+    virtual void Update(const RecordBatch& batch) = 0;
+};
+
+class GroupedAggregationFunction : public AggregationFunction {
+public:
+    GroupedAggregationFunction(ColumnType column_type) : AggregationFunction(column_type) {}
+
+    virtual void Resize(size_t num_groups) = 0;
+    virtual void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) = 0;
+};
 
 struct SumOperation {
     template <typename ResultType, typename ValueType>
     static void Apply(ResultType& result, const ValueType& value) {
         result += value;
-    }
-    template <typename ResultType>
-    static constexpr ResultType GetInitValue() {
-        return 0;
     }
 };
 
@@ -88,22 +74,18 @@ struct MinOperation {
     }
 };
 
-template <typename ColumnType, typename Operation>
+template <typename InputColumn, typename OutputColumn, typename Operation>
 class TypedGlobalAggregationFunction : public GlobalAggregationFunction {
-    using ResultColumnType = AggregationFunctionTraits<ColumnType>::ResultColumnType;
-    using StateType = AggregationFunctionTraits<ColumnType>::StateType;
+    using StateType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
 public:
-    explicit TypedGlobalAggregationFunction(size_t column_index) : column_index_(column_index) {
-        if constexpr (requires { Operation::template GetInitValue<StateType>(); }) {
-            state_ = Operation::template GetInitValue<StateType>();
-        } else {
-            state_ = StateType{};
-        }
+    TypedGlobalAggregationFunction(size_t column_index, ColumnType column_type)
+        : GlobalAggregationFunction(column_type), column_index_(column_index) {
     }
 
     void Update(const RecordBatch& batch) override {
-        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+        AggExpHelper::IterateColumnData<InputColumn>(batch, column_index_,
                                                     [&](const auto& value, size_t, size_t) {
                                                         if (!has_data_) {
                                                             state_ = value;
@@ -114,33 +96,34 @@ public:
                                                     });
     }
 
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<ResultColumnType>();
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
         if (has_data_) {
-            result_column->AddValue(state_);
+            typed->AddValue(state_);
         } else {
             if constexpr (requires { Operation::template GetInitValue<StateType>(); }) {
-                result_column->AddValue(Operation::template GetInitValue<StateType>());
+                typed->AddValue(Operation::template GetInitValue<StateType>());
             } else {
-                result_column->AddValue(StateType{});
+                typed->AddValue(StateType{});
             }
         }
-        return result_column;
     }
 
 private:
     size_t column_index_;
-    StateType state_;
+    StateType state_{};
     bool has_data_ = false;
 };
 
-template <typename ColumnType, typename Operation>
+template <typename InputColumn, typename OutputColumn, typename Operation>
 class TypedGroupedAggregationFunction : public GroupedAggregationFunction {
-    using ResultColumnType = AggregationFunctionTraits<ColumnType>::ResultColumnType;
-    using StateType = AggregationFunctionTraits<ColumnType>::StateType;
+    using StateType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
 public:
-    explicit TypedGroupedAggregationFunction(size_t column_index) : column_index_(column_index) {
+    TypedGroupedAggregationFunction(size_t column_index, ColumnType column_type)
+        : GroupedAggregationFunction(column_type), column_index_(column_index) {
     }
 
     void Resize(size_t num_groups) override {
@@ -151,7 +134,7 @@ public:
     }
 
     void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) override {
-        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+        AggExpHelper::IterateColumnData<InputColumn>(batch, column_index_,
                                                     [&](const auto& value, size_t row_idx, size_t) {
                                                         uint32_t gid = group_ids[row_idx];
                                                         if (!has_data_[gid]) {
@@ -163,12 +146,12 @@ public:
                                                     });
     }
 
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<ResultColumnType>();
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
         for (const auto& state : states_) {
-            result_column->AddValue(state);
+            typed->AddValue(state);
         }
-        return result_column;
     }
 
 private:
@@ -177,23 +160,40 @@ private:
     std::vector<char> has_data_;
 };
 
+template <typename OutputColumn>
 class CountGlobalAggregationFunction : public GlobalAggregationFunction {
+    using ValueType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
+
 public:
+    CountGlobalAggregationFunction(ColumnType column_type)
+        : GlobalAggregationFunction(column_type) {
+    }
+
     void Update(const RecordBatch& batch) override {
         count_ += batch.num_rows;
     }
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<Int64Column>();
-        result_column->AddValue(count_);
-        return result_column;
+
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
+        typed->AddValue(static_cast<ValueType>(count_));
     }
 
 private:
     int64_t count_ = 0;
 };
 
+template <typename OutputColumn>
 class CountGroupedAggregationFunction : public GroupedAggregationFunction {
+    using ValueType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
+
 public:
+    CountGroupedAggregationFunction(ColumnType column_type)
+        : GroupedAggregationFunction(column_type) {
+    }
+
     void Resize(size_t num_groups) override {
         if (num_groups > counts_.size()) {
             counts_.resize(num_groups, 0);
@@ -206,28 +206,32 @@ public:
             ++counts_[gid];
         }
     }
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<Int64Column>();
+
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
         for (int64_t c : counts_) {
-            result_column->AddValue(c);
+            typed->AddValue(static_cast<ValueType>(c));
         }
-        return result_column;
     }
 
 private:
     std::vector<int64_t> counts_;
 };
 
-template <typename ColumnType>
+template <typename InputColumn, typename OutputColumn>
 class AvgGlobalAggregationFunction : public GlobalAggregationFunction {
-    using StateType = AggregationFunctionTraits<ColumnType>::StateType;
+    using StateType = InputColumn::ValueType;
+    using OutputType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
 public:
-    explicit AvgGlobalAggregationFunction(size_t column_index) : column_index_(column_index) {
+    AvgGlobalAggregationFunction(size_t column_index, ColumnType column_type)
+        : GlobalAggregationFunction(column_type), column_index_(column_index) {
     }
 
     void Update(const RecordBatch& batch) override {
-        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+        AggExpHelper::IterateColumnData<InputColumn>(batch, column_index_,
                                                     [&](const auto& value, size_t, size_t) {
                                                         sum_ += value;
                                                         ++count_;
@@ -235,29 +239,43 @@ public:
         has_data_ = true;
     }
 
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<DoubleColumn>();
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
         if (has_data_ && count_ > 0) {
-            result_column->AddValue(static_cast<double>(sum_) / static_cast<double>(count_));
+            typed->AddValue(ComputeAvg());
         } else {
-            result_column->AddValue(0.0);
+            typed->AddValue(OutputType{});
         }
-        return result_column;
     }
 
 private:
+    OutputType ComputeAvg() const {
+        if constexpr (std::is_integral_v<StateType>) {
+            OutputType int_part = static_cast<OutputType>(sum_ / count_);
+            OutputType rem =
+                static_cast<OutputType>(static_cast<long double>(sum_ % count_) / count_);
+            return int_part + rem;
+        } else {
+            return static_cast<OutputType>(sum_) / static_cast<OutputType>(count_);
+        }
+    }
+
     size_t column_index_;
     StateType sum_ = 0;
     int64_t count_ = 0;
     bool has_data_ = false;
 };
 
-template <typename ColumnType>
+template <typename InputColumn, typename OutputColumn>
 class AvgGroupedAggregationFunction : public GroupedAggregationFunction {
-    using StateType = AggregationFunctionTraits<ColumnType>::StateType;
+    using StateType = InputColumn::ValueType;
+    using OutputType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
 public:
-    explicit AvgGroupedAggregationFunction(size_t column_index) : column_index_(column_index) {
+    AvgGroupedAggregationFunction(size_t column_index, ColumnType column_type)
+        : GroupedAggregationFunction(column_type), column_index_(column_index) {
     }
 
     void Resize(size_t num_groups) override {
@@ -267,7 +285,7 @@ public:
     }
 
     void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) override {
-        AggExpHelper::IterateColumnData<ColumnType>(batch, column_index_,
+        AggExpHelper::IterateColumnData<InputColumn>(batch, column_index_,
                                                     [&](const auto& value, size_t row_idx, size_t) {
                                                         uint32_t gid = group_ids[row_idx];
                                                         states_[gid].sum += value;
@@ -275,20 +293,30 @@ public:
                                                     });
     }
 
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<DoubleColumn>();
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
         for (const auto& state : states_) {
             if (state.count > 0) {
-                result_column->AddValue(static_cast<double>(state.sum) /
-                                        static_cast<double>(state.count));
+                typed->AddValue(ComputeAvg(state.sum, state.count));
             } else {
-                result_column->AddValue(0.0);
+                typed->AddValue(OutputType{});
             }
         }
-        return result_column;
     }
 
 private:
+    static OutputType ComputeAvg(StateType sum, int64_t count) {
+        if constexpr (std::is_integral_v<StateType>) {
+            OutputType int_part = static_cast<OutputType>(sum / count);
+            OutputType rem =
+                static_cast<OutputType>(static_cast<long double>(sum % count) / count);
+            return int_part + rem;
+        } else {
+            return static_cast<OutputType>(sum) / static_cast<OutputType>(count);
+        }
+    }
+
     struct State {
         StateType sum = 0;
         int64_t count = 0;
@@ -297,39 +325,45 @@ private:
     std::vector<State> states_;
 };
 
-template <typename ColumnType>
+template <typename InputColumn, typename OutputColumn>
 class DistinctCountGlobalAggregationFunction : public GlobalAggregationFunction {
-    using ValueType = AggregationFunctionTraits<ColumnType>::ValueType;
+    using InputValueType = InputColumn::ValueType;
+    using OutputValueType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
 public:
-    explicit DistinctCountGlobalAggregationFunction(size_t column_index)
-        : column_index_(column_index) {
+    DistinctCountGlobalAggregationFunction(size_t column_index, ColumnType column_type)
+        : GlobalAggregationFunction(column_type), column_index_(column_index) {
     }
 
     void Update(const RecordBatch& batch) override {
-        AggExpHelper::IterateColumnData<ColumnType>(
+        AggExpHelper::IterateColumnData<InputColumn>(
             batch, column_index_,
-            [&](const auto& value, size_t, size_t) { distinct_values_.insert(ValueType(value)); });
+            [&](const auto& value, size_t, size_t) {
+                distinct_values_.insert(InputValueType(value));
+            });
     }
 
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<Int32Column>();
-        result_column->AddValue(static_cast<int32_t>(distinct_values_.size()));
-        return result_column;
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
+        typed->AddValue(static_cast<OutputValueType>(distinct_values_.size()));
     }
 
 private:
     size_t column_index_;
-    std::unordered_set<ValueType> distinct_values_;
+    std::unordered_set<InputValueType> distinct_values_;
 };
 
-template <typename ColumnType>
+template <typename InputColumn, typename OutputColumn>
 class DistinctCountGroupedAggregationFunction : public GroupedAggregationFunction {
-    using ValueType = AggregationFunctionTraits<ColumnType>::ValueType;
+    using InputValueType = InputColumn::ValueType;
+    using OutputValueType = OutputColumn::ValueType;
+    using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
 public:
-    explicit DistinctCountGroupedAggregationFunction(size_t column_index)
-        : column_index_(column_index) {
+    DistinctCountGroupedAggregationFunction(size_t column_index, ColumnType column_type)
+        : GroupedAggregationFunction(column_type), column_index_(column_index) {
     }
 
     void Resize(size_t num_groups) override {
@@ -339,22 +373,22 @@ public:
     }
 
     void Update(const RecordBatch& batch, const std::vector<uint32_t>& group_ids) override {
-        AggExpHelper::IterateColumnData<ColumnType>(
+        AggExpHelper::IterateColumnData<InputColumn>(
             batch, column_index_, [&](const auto& value, size_t row_idx, size_t) {
                 uint32_t gid = group_ids[row_idx];
-                distinct_values_[gid].insert(ValueType(value));
+                distinct_values_[gid].insert(InputValueType(value));
             });
     }
 
-    std::shared_ptr<Column> Finalize() override {
-        auto result_column = std::make_shared<Int32Column>();
+protected:
+    void WriteResult(const std::shared_ptr<ColumnBuilder>& builder) override {
+        auto* typed = static_cast<OutputBuilder*>(builder.get());
         for (const auto& set : distinct_values_) {
-            result_column->AddValue(static_cast<int32_t>(set.size()));
+            typed->AddValue(static_cast<OutputValueType>(set.size()));
         }
-        return result_column;
     }
 
 private:
     size_t column_index_;
-    std::vector<std::unordered_set<ValueType>> distinct_values_;
+    std::vector<std::unordered_set<InputValueType>> distinct_values_;
 };

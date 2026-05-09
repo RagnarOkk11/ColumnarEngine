@@ -13,6 +13,9 @@ public:
     using ValueType = std::string;
     using ContainerType = VectorOfStrings;
 
+    StringColumn() = default;
+    StringColumn(ContainerType&& data) noexcept : data_(std::move(data)) {}
+
     ColumnType GetType() const override {
         return ColumnType::STRING;
     }
@@ -33,10 +36,6 @@ public:
         return data_;
     }
 
-    void AddValue(std::string_view value) {
-        data_.PushBack(value);
-    }
-    
     void ReadFromBuffer(const std::vector<char>& buffer) {
         Clear();
         size_t offset = 0;
@@ -56,21 +55,30 @@ private:
 
 class StringColumnBuilder : public ColumnBuilder {
 public:
-    StringColumnBuilder() : column_(std::make_shared<StringColumn>()) {}
+    StringColumnBuilder() = default;
+
+    void AddValue(std::string_view value) {
+        data_.PushBack(value);
+    }
 
     void AddBatch(const VectorOfStrings2D& batch, size_t j) override {
         size_t h = batch.Height();
         for (size_t i = 0; i < h; ++i) {
-            column_->AddValue(batch.GetString2D(i, j));
+            data_.PushBack(batch.GetString2D(i, j));
         }
     }
 
     std::shared_ptr<Column> Finish() override {
-        auto result = column_;
-        column_ = std::make_shared<StringColumn>();
+        auto result = std::make_shared<StringColumn>(std::move(data_));
+        data_.Clear();
         return result;
     }
 
 private:
-    std::shared_ptr<StringColumn> column_;
+    VectorOfStrings data_;
+};
+
+template <>
+struct BuilderTypeTrait<StringColumn> {
+    using Type = StringColumnBuilder;
 };

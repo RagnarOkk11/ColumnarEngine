@@ -75,6 +75,31 @@ private:
     ValueType value_;
 };
 
+template <typename ValueType>
+class GreaterFilterExpression : public FilterExpression {
+public:
+    GreaterFilterExpression(std::string column_name, ValueType value)
+        : FilterExpression(column_name), value_(std::move(value)) {
+    }
+
+    std::unique_ptr<FilterFunction> CreateFilterFunction(const Schema& child_schema) override {
+        size_t ind = child_schema.GetColumnIndexByName(column_name_);
+        ColumnType column_type = child_schema.GetColumnTypeByName(column_name_);
+
+        return AggExpHelper::DispatchAll(
+            column_type, [&]<typename ColumnClass>(ColumnType) -> std::unique_ptr<FilterFunction> {
+                if constexpr (std::is_same_v<typename ColumnClass::ValueType, ValueType>) {
+                    return std::make_unique<GreaterFilterFunction<ColumnClass, ValueType>>(ind, value_);
+                } else {
+                    THROW_NOT_IMPLEMENTED;
+                }
+            });
+    }
+
+private:
+    ValueType value_;
+};
+
 class LikeExpression : public FilterExpression {
 public:
     LikeExpression(std::string column_name, std::string value)
@@ -88,10 +113,12 @@ public:
         ColumnType column_type = child_schema.GetColumnTypeByName(column_name_);
 
         return AggExpHelper::DispatchAll(
-            column_type, [&]<typename ColumnClass = StringColumn>(ColumnType) -> std::unique_ptr<FilterFunction> {
+            column_type,
+            [&]<typename ColumnClass = StringColumn>(
+                ColumnType) -> std::unique_ptr<FilterFunction> {
                 if constexpr (std::is_same_v<typename ColumnClass::ValueType, std::string>) {
                     return std::make_unique<LikeFilterFunction<ColumnClass, std::string>>(ind,
-                                                                                        value_);
+                                                                                          value_);
                 } else {
                     THROW_NOT_IMPLEMENTED;
                 }
@@ -115,10 +142,12 @@ public:
         ColumnType column_type = child_schema.GetColumnTypeByName(column_name_);
 
         return AggExpHelper::DispatchAll(
-            column_type, [&]<typename ColumnClass = StringColumn>(ColumnType) -> std::unique_ptr<FilterFunction> {
+            column_type,
+            [&]<typename ColumnClass = StringColumn>(
+                ColumnType) -> std::unique_ptr<FilterFunction> {
                 if constexpr (std::is_same_v<typename ColumnClass::ValueType, std::string>) {
-                    return std::make_unique<NotLikeFilterFunction<ColumnClass, std::string>>(ind,
-                                                                                        value_);
+                    return std::make_unique<NotLikeFilterFunction<ColumnClass, std::string>>(
+                        ind, value_);
                 } else {
                     THROW_NOT_IMPLEMENTED;
                 }
@@ -146,6 +175,16 @@ inline std::shared_ptr<FilterExpression> Eq(const std::string& column_name, T ta
                                                                  std::string(target_val));
     } else {
         return std::make_shared<EqFilterExpression<T>>(column_name, std::move(target_val));
+    }
+}
+
+template <typename T>
+inline std::shared_ptr<FilterExpression> Greater(const std::string& column_name, T target_val) {
+    if constexpr (std::is_convertible_v<T, std::string_view>) {
+        return std::make_shared<GreaterFilterExpression<std::string>>(column_name,
+                                                                 std::string(target_val));
+    } else {
+        return std::make_shared<GreaterFilterExpression<T>>(column_name, std::move(target_val));
     }
 }
 

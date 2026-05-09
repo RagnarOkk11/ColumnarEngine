@@ -5,9 +5,9 @@
 
 class AggExpHelper {
 public:
-    template <typename ColumnType, typename Func>
+    template <typename ColumnT, typename Func>
     static void IterateColumnData(const RecordBatch& batch, size_t column_index, Func&& func) {
-        auto* column = static_cast<const ColumnType*>(batch.columns[column_index].get());
+        auto* column = static_cast<const ColumnT*>(batch.columns[column_index].get());
         const auto& data = column->GetData();
 
         if (!batch.selection_vector) {
