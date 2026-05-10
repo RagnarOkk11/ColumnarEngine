@@ -219,9 +219,9 @@ private:
     std::vector<int64_t> counts_;
 };
 
-template <typename InputColumn, typename OutputColumn>
+template <typename InputColumn, typename OutputColumn, typename StateColumn>
 class AvgGlobalAggregationFunction : public GlobalAggregationFunction {
-    using StateType = InputColumn::ValueType;
+    using StateType = StateColumn::ValueType;
     using OutputType = OutputColumn::ValueType;
     using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 
@@ -267,9 +267,9 @@ private:
     bool has_data_ = false;
 };
 
-template <typename InputColumn, typename OutputColumn>
+template <typename InputColumn, typename OutputColumn, typename StateColumn>
 class AvgGroupedAggregationFunction : public GroupedAggregationFunction {
-    using StateType = InputColumn::ValueType;
+    using StateType = StateColumn::ValueType;
     using OutputType = OutputColumn::ValueType;
     using OutputBuilder = BuilderTypeTrait<OutputColumn>::Type;
 

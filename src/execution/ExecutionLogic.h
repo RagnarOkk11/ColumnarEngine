@@ -23,7 +23,9 @@ enum class PlanNodeType {
     FILTER,
     ORDER_BY,
     LIMIT,
-    SCALAR
+    SCALAR,
+    DROP,
+    REORDER
 };
 
 struct PlanNode {
@@ -76,6 +78,20 @@ struct ScalarNode : public PlanNode {
     }
     std::shared_ptr<PlanNode> child;
     std::vector<std::shared_ptr<ScalarExpression>> scalar_expressions;
+};
+
+struct DropNode : public PlanNode {
+    DropNode() : PlanNode(PlanNodeType::DROP) {
+    }
+    std::shared_ptr<PlanNode> child;
+    std::vector<std::string> columns_to_drop;
+};
+
+struct ReorderNode : public PlanNode {
+    ReorderNode() : PlanNode(PlanNodeType::REORDER) {
+    }
+    std::shared_ptr<PlanNode> child;
+    std::vector<std::string> desired_order_;
 };
 
 struct PhysicalOperatorContext {
@@ -289,6 +305,78 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             return {std::move(op), std::move(child_context.schema)};
         }
 
-        default: THROW_RUNTIME_ERROR("Unknown plan node type");
+        case PlanNodeType::DROP: {
+            auto drop = std::static_pointer_cast<DropNode>(plan_node);
+
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(drop->child, required_columns);
+
+            std::vector<size_t> cols_to_keep_indices;
+            Schema output_schema;
+            const auto& child_fields = child_context.schema.GetFields();
+
+            for (const std::string& drop_col : drop->columns_to_drop) {
+                bool found = false;
+                for (const auto& field : child_fields) {
+                    if (field.name == drop_col) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    THROW_RUNTIME_ERROR("Cannot drop column '" + drop_col +
+                                        "': not found in dataframe");
+                }
+            }
+
+            for (size_t i = 0; i < child_fields.size(); ++i) {
+                const auto& field = child_fields[i];
+                if (std::find(drop->columns_to_drop.begin(), drop->columns_to_drop.end(),
+                              field.name) == drop->columns_to_drop.end()) {
+                    cols_to_keep_indices.push_back(i);
+                    output_schema.AddField({field.name, field.type});
+                }
+            }
+
+            auto op = std::make_unique<DropOperator>(std::move(child_context.root_operator),
+                                                     std::move(cols_to_keep_indices));
+            return {std::move(op), std::move(output_schema)};
+        }
+
+        case PlanNodeType::REORDER: {
+            auto reorder = std::static_pointer_cast<ReorderNode>(plan_node);
+
+            PhysicalOperatorContext child_context = BuildPhysicalPlan(reorder->child, required_columns);
+
+            std::vector<size_t> new_indices;
+            Schema output_schema;
+            const auto& child_fields = child_context.schema.GetFields();
+
+            for (const std::string& reorder_col : reorder->desired_order_) {
+                bool found = false;
+                for (size_t i = 0; i < child_fields.size(); ++i) {
+                    const auto& field = child_fields[i];
+                    if (field.name == reorder_col) {
+                        found = true;
+                        new_indices.push_back(i);
+                        output_schema.AddField({field.name, field.type});
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    THROW_RUNTIME_ERROR("Cannot reorder column '" + reorder_col + "': not found in dataframe");
+                }
+            }
+
+            auto op = std::make_unique<ReorderOperator>(
+                std::move(child_context.root_operator),
+                std::move(new_indices)
+            );
+            return {std::move(op), std::move(output_schema)};
+        }
+
+        default:
+            THROW_RUNTIME_ERROR("Unknown plan node type");
     }
 }

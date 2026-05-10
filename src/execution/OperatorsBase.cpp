@@ -363,3 +363,24 @@ std::unique_ptr<RecordBatch> ScalarOperator::Run() {
 
     return batch;
 }
+
+DropOperator::DropOperator(std::unique_ptr<Operator> child, std::vector<size_t> column_stay_indices)
+    : child_(std::move(child)), column_stay_indices_(std::move(column_stay_indices)) {
+}
+
+std::unique_ptr<RecordBatch> DropOperator::Run() {
+    auto batch = child_->Run();
+    if (!batch) {
+        return nullptr;
+    }
+
+    std::vector<std::shared_ptr<Column>> new_columns;
+    new_columns.reserve(column_stay_indices_.size());
+
+    for (size_t ind : column_stay_indices_) {
+        new_columns.push_back(std::move(batch->columns[ind]));
+    }
+
+    batch->columns = std::move(new_columns);
+    return batch;
+}

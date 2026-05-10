@@ -41,8 +41,9 @@ private:
 
 class AggregationOperator : public Operator {
 public:
-    AggregationOperator(std::unique_ptr<Operator> child,
-                        std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions);
+    AggregationOperator(
+        std::unique_ptr<Operator> child,
+        std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions);
 
     std::unique_ptr<RecordBatch> Run() override;
 
@@ -128,4 +129,44 @@ public:
 private:
     std::unique_ptr<Operator> child_;
     std::vector<std::unique_ptr<ScalarFunction>> scalar_functions_;
+};
+
+class DropOperator : public Operator {
+public:
+    DropOperator(std::unique_ptr<Operator> child, std::vector<size_t> column_stay_indices);
+
+    std::unique_ptr<RecordBatch> Run() override;
+
+private:
+    std::unique_ptr<Operator> child_;
+    std::vector<size_t> column_stay_indices_;
+};
+
+class ReorderOperator : public Operator {
+public:
+    ReorderOperator(std::unique_ptr<Operator> child, std::vector<size_t> new_indices)
+        : child_(std::move(child)), new_indices_(std::move(new_indices)) {
+    }
+
+    std::unique_ptr<RecordBatch> Run() override {
+        auto batch = child_->Run();
+        if (!batch) {
+            return nullptr;
+        }
+
+        auto new_batch = std::make_unique<RecordBatch>();
+        new_batch->num_rows = batch->num_rows;
+        new_batch->selection_vector = batch->selection_vector;
+
+        new_batch->columns.reserve(new_indices_.size());
+        for (size_t ind : new_indices_) {
+            new_batch->columns.push_back(batch->columns[ind]);
+        }
+
+        return new_batch;
+    }
+
+private:
+    std::unique_ptr<Operator> child_;
+    std::vector<size_t> new_indices_;
 };

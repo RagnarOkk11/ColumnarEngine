@@ -25,7 +25,7 @@ public:
         const std::vector<Field>& fields = schema_.GetFields();
         if (!fields.empty()) {
             for (const Field& field : fields) {
-                std::cout << field.name << " ";
+                std::cout << field.name << ",";
             }
             std::cout << "\n";
         }
@@ -38,11 +38,24 @@ public:
             for (size_t i = 0; i < rows; ++i) {
                 size_t ind = batch->selection_vector ? (*batch->selection_vector)[i] : i;
                 for (const std::shared_ptr<Column>& column : batch->columns) {
-                    std::cout << ExecutionHelper::FormatValue(*column, ind) << " ";
+                    std::cout << ExecutionHelper::FormatValue(*column, ind) << ",";
                 }
                 std::cout << "\n";
             }
         }
+    }
+
+    std::shared_ptr<Column> GetResult(std::string column_name) const {
+        const std::vector<Field>& fields = schema_.GetFields();
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].name == column_name) {
+                if (!batches_[0]->columns.empty()) {
+                    return batches_[0]->columns[i];
+                }
+                break;
+            }
+        }
+        THROW_RUNTIME_ERROR("No charoncik bebe");
     }
 
 private:
@@ -100,6 +113,20 @@ public:
         scalar_node->child = logical_plan_;
         scalar_node->scalar_expressions = std::move(scalar_expressions);
         return DataFrame(scalar_node);
+    }
+
+    DataFrame Drop(std::vector<std::string> columns_to_drop) {
+        auto drop_node = std::make_shared<DropNode>();
+        drop_node->child = logical_plan_;
+        drop_node->columns_to_drop = std::move(columns_to_drop);
+        return DataFrame(drop_node);
+    }
+
+    DataFrame Reoder(std::vector<std::string> desired_order) {
+        auto node = std::make_shared<ReorderNode>();
+        node->child = logical_plan_;
+        node->desired_order_ = std::move(desired_order);
+        return DataFrame(node);
     }
 
     DataResult Collect() {

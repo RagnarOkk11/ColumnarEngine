@@ -8,6 +8,48 @@
 #include <string>
 #include <utility>
 
+template <typename InputColumn>
+struct SumResultTrait {
+    using Type = InputColumn;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::INT64;
+};
+
+template <>
+struct SumResultTrait<Int16Column> {
+    using Type = Int32Column;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::INT32;
+};
+template <>
+struct SumResultTrait<Int32Column> {
+    using Type = Int64Column;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::INT64;
+};
+template <>
+struct SumResultTrait<Int64Column> {
+    using Type = Int128Column;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::INT128;
+};
+template <>
+struct SumResultTrait<Int128Column> {
+    using Type = Int128Column;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::INT128;
+};
+template <>
+struct SumResultTrait<FloatColumn> {
+    using Type = DoubleColumn;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::DOUBLE;
+};
+template <>
+struct SumResultTrait<DoubleColumn> {
+    using Type = LongDoubleColumn;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::LONGDOUBLE;
+};
+template <>
+struct SumResultTrait<LongDoubleColumn> {
+    using Type = LongDoubleColumn;
+    static constexpr ColumnType kOutTypeEnum = ColumnType::LONGDOUBLE;
+};
+
 class AggregateExpression {
 public:
     virtual ~AggregateExpression() = default;
@@ -203,45 +245,22 @@ public:
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
-        switch (column_type) {
-            case ColumnType::INT16:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT32);
-                return std::make_unique<
-                    TypedGlobalAggregationFunction<Int16Column, Int32Column, SumOperation>>(
-                    column_ind, ColumnType::INT32);
-            case ColumnType::INT32:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT64);
-                return std::make_unique<
-                    TypedGlobalAggregationFunction<Int32Column, Int64Column, SumOperation>>(
-                    column_ind, ColumnType::INT64);
-            case ColumnType::INT64:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT128);
-                return std::make_unique<
-                    TypedGlobalAggregationFunction<Int64Column, Int128Column, SumOperation>>(
-                    column_ind, ColumnType::INT128);
-            case ColumnType::INT128:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT128);
-                return std::make_unique<
-                    TypedGlobalAggregationFunction<Int128Column, Int128Column, SumOperation>>(
-                    column_ind, ColumnType::INT128);
-            case ColumnType::FLOAT:
-                output_schema.AddColumn(GetOutputName(), ColumnType::DOUBLE);
-                return std::make_unique<
-                    TypedGlobalAggregationFunction<FloatColumn, DoubleColumn, SumOperation>>(
-                    column_ind, ColumnType::DOUBLE);
-            case ColumnType::DOUBLE:
-                output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
-                return std::make_unique<
-                    TypedGlobalAggregationFunction<DoubleColumn, LongDoubleColumn, SumOperation>>(
-                    column_ind, ColumnType::LONGDOUBLE);
-            case ColumnType::LONGDOUBLE:
-                output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
-                return std::make_unique<TypedGlobalAggregationFunction<LongDoubleColumn,
-                                                                       LongDoubleColumn,
-                                                                       SumOperation>>(
-                    column_ind, ColumnType::LONGDOUBLE);
-            default: THROW_NOT_IMPLEMENTED;
+        if (column_type == ColumnType::STRING || column_type == ColumnType::CHAR ||
+            column_type == ColumnType::DATE || column_type == ColumnType::TIMESTAMP) {
+            THROW_RUNTIME_ERROR("SUM operation is not supported for this column type");
         }
+
+        return AggExpHelper::DispatchNumeric(
+            column_type,
+            [&]<typename InputColumn>(ColumnType) -> std::unique_ptr<GlobalAggregationFunction> {
+                using OutputColumn = SumResultTrait<InputColumn>::Type;
+                ColumnType out_type = SumResultTrait<InputColumn>::kOutTypeEnum;
+
+                output_schema.AddColumn(GetOutputName(), out_type);
+                return std::make_unique<
+                    TypedGlobalAggregationFunction<InputColumn, OutputColumn, SumOperation>>(
+                    column_ind, out_type);
+            });
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
@@ -249,45 +268,22 @@ public:
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
-        switch (column_type) {
-            case ColumnType::INT16:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT32);
-                return std::make_unique<
-                    TypedGroupedAggregationFunction<Int16Column, Int32Column, SumOperation>>(
-                    column_ind, ColumnType::INT32);
-            case ColumnType::INT32:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT64);
-                return std::make_unique<
-                    TypedGroupedAggregationFunction<Int32Column, Int64Column, SumOperation>>(
-                    column_ind, ColumnType::INT64);
-            case ColumnType::INT64:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT128);
-                return std::make_unique<
-                    TypedGroupedAggregationFunction<Int64Column, Int128Column, SumOperation>>(
-                    column_ind, ColumnType::INT128);
-            case ColumnType::INT128:
-                output_schema.AddColumn(GetOutputName(), ColumnType::INT128);
-                return std::make_unique<
-                    TypedGroupedAggregationFunction<Int128Column, Int128Column, SumOperation>>(
-                    column_ind, ColumnType::INT128);
-            case ColumnType::FLOAT:
-                output_schema.AddColumn(GetOutputName(), ColumnType::DOUBLE);
-                return std::make_unique<
-                    TypedGroupedAggregationFunction<FloatColumn, DoubleColumn, SumOperation>>(
-                    column_ind, ColumnType::DOUBLE);
-            case ColumnType::DOUBLE:
-                output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
-                return std::make_unique<
-                    TypedGroupedAggregationFunction<DoubleColumn, LongDoubleColumn, SumOperation>>(
-                    column_ind, ColumnType::LONGDOUBLE);
-            case ColumnType::LONGDOUBLE:
-                output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
-                return std::make_unique<TypedGroupedAggregationFunction<LongDoubleColumn,
-                                                                        LongDoubleColumn,
-                                                                        SumOperation>>(
-                    column_ind, ColumnType::LONGDOUBLE);
-            default: THROW_NOT_IMPLEMENTED;
+        if (column_type == ColumnType::STRING || column_type == ColumnType::CHAR ||
+            column_type == ColumnType::DATE || column_type == ColumnType::TIMESTAMP) {
+            THROW_RUNTIME_ERROR("SUM operation is not supported for this column type");
         }
+
+        return AggExpHelper::DispatchNumeric(
+            column_type,
+            [&]<typename InputColumn>(ColumnType) -> std::unique_ptr<GroupedAggregationFunction> {
+                using OutputColumn = SumResultTrait<InputColumn>::Type;
+                ColumnType out_type = SumResultTrait<InputColumn>::kOutTypeEnum;
+
+                output_schema.AddColumn(GetOutputName(), out_type);
+                return std::make_unique<
+                    TypedGroupedAggregationFunction<InputColumn, OutputColumn, SumOperation>>(
+                    column_ind, out_type);
+            });
     }
 };
 
@@ -308,11 +304,20 @@ public:
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
+        if (column_type == ColumnType::STRING || column_type == ColumnType::CHAR ||
+            column_type == ColumnType::DATE || column_type == ColumnType::TIMESTAMP) {
+            THROW_RUNTIME_ERROR("AVG operation is not supported for non-numeric columns");
+        }
+
         return AggExpHelper::DispatchNumeric(
-            column_type, [&]<typename T>(ColumnType) -> std::unique_ptr<GlobalAggregationFunction> {
-                output_schema.AddColumn(GetOutputName(), ColumnType::DOUBLE);
-                return std::make_unique<AvgGlobalAggregationFunction<T, DoubleColumn>>(
-                    column_ind, ColumnType::DOUBLE);
+            column_type,
+            [&]<typename InputColumn>(ColumnType) -> std::unique_ptr<GlobalAggregationFunction> {
+                using StateColumn = SumResultTrait<InputColumn>::Type;
+
+                output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
+                return std::make_unique<
+                    AvgGlobalAggregationFunction<InputColumn, LongDoubleColumn, StateColumn>>(
+                    column_ind, ColumnType::LONGDOUBLE);
             });
     }
 
@@ -321,12 +326,20 @@ public:
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
+        if (column_type == ColumnType::STRING || column_type == ColumnType::CHAR ||
+            column_type == ColumnType::DATE || column_type == ColumnType::TIMESTAMP) {
+            THROW_RUNTIME_ERROR("AVG operation is not supported for non-numeric columns");
+        }
+
         return AggExpHelper::DispatchNumeric(
             column_type,
-            [&]<typename T>(ColumnType) -> std::unique_ptr<GroupedAggregationFunction> {
-                output_schema.AddColumn(GetOutputName(), ColumnType::DOUBLE);
-                return std::make_unique<AvgGroupedAggregationFunction<T, DoubleColumn>>(
-                    column_ind, ColumnType::DOUBLE);
+            [&]<typename InputColumn>(ColumnType) -> std::unique_ptr<GroupedAggregationFunction> {
+                using StateColumn = SumResultTrait<InputColumn>::Type;
+
+                output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
+                return std::make_unique<
+                    AvgGroupedAggregationFunction<InputColumn, LongDoubleColumn, StateColumn>>(
+                    column_ind, ColumnType::LONGDOUBLE);
             });
     }
 };
