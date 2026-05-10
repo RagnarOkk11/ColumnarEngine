@@ -72,11 +72,6 @@ void ColumnarWriter::WriteBatch(const std::vector<std::shared_ptr<Column>>& colu
             }
             file_.write(buffer.data(), buffer.size());
             size = total_size;
-        } else if (type == ColumnType::CHAR) {
-            size = columns[i]->Size();
-            if (size > 0) {
-                file_.write(static_cast<const char*>(columns[i]->GetRawData()), size);
-            }
         } else {
             size_t elem_size = 0;
 #define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE) \

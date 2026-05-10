@@ -245,10 +245,9 @@ public:
         df.Display();
     }
 
-    // TODO: support SELECT *
     // SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10;
     void Query23() {
-        auto df = DataFrame::Select(columnar_file_path_, {"URL", "EventTime"})
+        auto df = DataFrame::Select(columnar_file_path_, {"*"})
                       .Filter(Like("URL", "%google%"))
                       .OrderBy({{"EventTime", false}}, 10)
                       .Collect();

@@ -8,10 +8,6 @@
 #include "execution/expressions/ScalarExpressions.h"
 
 #include "column/Schema.h"
-#include "column/NumericColumn.h"
-#include "column/StringColumn.h"
-#include "column/CharColumn.h"
-#include "column/TemporalColumn.h"
 
 #include "utils/Macro.h"
 
@@ -32,31 +28,37 @@ enum class PlanNodeType {
 
 struct PlanNode {
     PlanNodeType type;
+
 protected:
-    explicit PlanNode(PlanNodeType node_type) : type(node_type) {}
+    explicit PlanNode(PlanNodeType node_type) : type(node_type) {
+    }
 };
 
 struct ScanNode : public PlanNode {
-    ScanNode() : PlanNode(PlanNodeType::SCAN) {}
+    ScanNode() : PlanNode(PlanNodeType::SCAN) {
+    }
     std::string table_path;
     std::vector<std::string> column_names;
 };
 
 struct AggregateNode : public PlanNode {
-    AggregateNode() : PlanNode(PlanNodeType::AGGREGATE) {}
+    AggregateNode() : PlanNode(PlanNodeType::AGGREGATE) {
+    }
     std::shared_ptr<PlanNode> child;
     std::vector<std::string> group_by_columns;
     std::vector<std::shared_ptr<AggregateExpression>> aggregate_expressions;
 };
 
 struct FilterNode : public PlanNode {
-    FilterNode() : PlanNode(PlanNodeType::FILTER) {}
+    FilterNode() : PlanNode(PlanNodeType::FILTER) {
+    }
     std::shared_ptr<PlanNode> child;
     std::shared_ptr<FilterExpression> filter_expression;
 };
 
 struct OrderByNode : public PlanNode {
-    OrderByNode() : PlanNode(PlanNodeType::ORDER_BY) {}
+    OrderByNode() : PlanNode(PlanNodeType::ORDER_BY) {
+    }
     std::shared_ptr<PlanNode> child;
     std::vector<std::pair<std::string, bool>> order_by_columns;
     std::optional<size_t> limit;
@@ -70,7 +72,8 @@ struct LimitNode : public PlanNode {
 };
 
 struct ScalarNode : public PlanNode {
-    ScalarNode() : PlanNode(PlanNodeType::SCALAR) {}
+    ScalarNode() : PlanNode(PlanNodeType::SCALAR) {
+    }
     std::shared_ptr<PlanNode> child;
     std::vector<std::shared_ptr<ScalarExpression>> scalar_expressions;
 };
@@ -91,23 +94,22 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             Schema full_schema = Schema::FromColumnarFile(scan->table_path);
             const std::vector<Field>& full_columns = full_schema.GetFields();
 
-            if (required_columns.has_value()) {
-                final_columns = required_columns.value();
-                if (final_columns.empty() && !full_columns.empty()) {
-                    final_columns.push_back(full_columns[0].name);
+            std::vector<std::string> user_cols;
+            if (scan->column_names.size() == 1 && scan->column_names[0] == "*") {
+                for (const Field& field : full_columns) {
+                    user_cols.push_back(field.name);
                 }
             } else {
-                if (scan->column_names.empty()) {
-                    for (const Field& field : full_columns) {
-                        final_columns.push_back(field.name);
-                    }
-                } else {
-                    final_columns = scan->column_names;
-                }
+                user_cols = scan->column_names;
+            }
+
+            final_columns = user_cols;
+            if (required_columns.has_value()) {
+                final_columns.insert(final_columns.end(), required_columns->begin(),
+                                     required_columns->end());
             }
 
             auto op = std::make_unique<ScanOperator>(scan->table_path, final_columns);
-
             Schema output_schema;
             for (const std::string& name : final_columns) {
                 bool found = false;
@@ -157,8 +159,8 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
                 std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs;
                 for (const std::shared_ptr<AggregateExpression>& expr :
                      aggregate->aggregate_expressions) {
-                    agg_funcs.push_back(
-                        expr->CreateGroupedAggregationFunction(child_context.schema, output_schema));
+                    agg_funcs.push_back(expr->CreateGroupedAggregationFunction(child_context.schema,
+                                                                               output_schema));
                 }
 
                 auto op = std::make_unique<GroupByOperator>(
@@ -168,17 +170,20 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             }
 
             std::vector<std::string> needed_columns = aggregate->group_by_columns;
-            for (const std::shared_ptr<AggregateExpression>& expr : aggregate->aggregate_expressions) {
+            for (const std::shared_ptr<AggregateExpression>& expr :
+                 aggregate->aggregate_expressions) {
                 expr->CollectRequiredColumns(needed_columns);
             }
             std::sort(needed_columns.begin(), needed_columns.end());
             needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                                  needed_columns.end());
 
-            PhysicalOperatorContext child_context = BuildPhysicalPlan(aggregate->child, needed_columns);
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(aggregate->child, needed_columns);
             std::vector<std::unique_ptr<GlobalAggregationFunction>> agg_functions;
             Schema output_schema;
-            for (const std::shared_ptr<AggregateExpression>& expr : aggregate->aggregate_expressions) {
+            for (const std::shared_ptr<AggregateExpression>& expr :
+                 aggregate->aggregate_expressions) {
                 agg_functions.push_back(
                     expr->CreateGlobalAggregationFunction(child_context.schema, output_schema));
             }
@@ -200,7 +205,8 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                                  needed_columns.end());
 
-            PhysicalOperatorContext child_context = BuildPhysicalPlan(filter->child, needed_columns);
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(filter->child, needed_columns);
             std::unique_ptr<FilterFunction> filter_function =
                 filter->filter_expression->CreateFilterFunction(child_context.schema);
             auto op = std::make_unique<FilterOperator>(std::move(child_context.root_operator),
@@ -221,24 +227,26 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                                  needed_columns.end());
 
-            PhysicalOperatorContext child_context = BuildPhysicalPlan(order_by->child, needed_columns);
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(order_by->child, needed_columns);
             std::vector<std::pair<size_t, bool>> sort_columns;
             for (const auto& [col_name, is_desc] : order_by->order_by_columns) {
                 size_t sort_col_idx = child_context.schema.GetColumnIndexByName(col_name);
                 sort_columns.push_back({sort_col_idx, is_desc});
             }
 
-            auto op =
-                std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
-                                                  std::move(sort_columns), std::move(order_by->limit));
+            auto op = std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
+                                                        std::move(sort_columns),
+                                                        std::move(order_by->limit));
             return {std::move(op), std::move(child_context.schema)};
         }
 
         case PlanNodeType::LIMIT: {
             auto limit = std::static_pointer_cast<LimitNode>(plan_node);
-            PhysicalOperatorContext child_context = BuildPhysicalPlan(limit->child, required_columns);
-            auto op =
-                std::make_unique<LimitOperator>(std::move(child_context.root_operator), limit->limit);
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(limit->child, required_columns);
+            auto op = std::make_unique<LimitOperator>(std::move(child_context.root_operator),
+                                                      limit->limit);
             return {std::move(op), std::move(child_context.schema)};
         }
 
@@ -267,7 +275,8 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                                  needed_columns.end());
 
-            PhysicalOperatorContext child_context = BuildPhysicalPlan(scalar->child, needed_columns);
+            PhysicalOperatorContext child_context =
+                BuildPhysicalPlan(scalar->child, needed_columns);
 
             std::vector<std::unique_ptr<ScalarFunction>> scalar_functions;
 
@@ -280,7 +289,6 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
             return {std::move(op), std::move(child_context.schema)};
         }
 
-        default:
-            THROW_RUNTIME_ERROR("Unknown plan node type");
+        default: THROW_RUNTIME_ERROR("Unknown plan node type");
     }
 }

@@ -23,7 +23,7 @@ public:
     }
 
     const void* GetRawData() const override {
-        return data_.data();
+        return &data_;
     }
 
     void Clear() override {

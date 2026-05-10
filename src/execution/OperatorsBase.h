@@ -92,6 +92,8 @@ public:
     std::unique_ptr<RecordBatch> Run() override;
 
 private:
+    void TrimCurBatch(bool is_final);
+
     std::unique_ptr<Operator> child_;
     std::vector<std::pair<size_t, bool>> sort_columns_;
     std::unique_ptr<RecordBatch> accumulated_batch_;

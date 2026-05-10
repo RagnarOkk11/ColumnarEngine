@@ -12,7 +12,7 @@ ScanOperator::ScanOperator(const std::string& table_path,
     : reader_(table_path) {
     const std::vector<ColumnMetadata>& metadata = reader_.GetMetadata();
 
-    if (column_names.empty()) {
+    if (column_names == std::vector<std::string>{"*"}) {
         for (size_t i = 0; i < metadata.size(); ++i) {
             column_indices_.push_back(i);
         }
@@ -68,14 +68,16 @@ std::unique_ptr<RecordBatch> AggregationOperator::Run() {
         return nullptr;
     }
     while (std::unique_ptr<RecordBatch> batch = child_->Run()) {
-        for (std::unique_ptr<GlobalAggregationFunction>& aggregation_function : aggregation_functions_) {
+        for (std::unique_ptr<GlobalAggregationFunction>& aggregation_function :
+             aggregation_functions_) {
             aggregation_function->Update(*batch);
         }
     }
     auto result_batch = std::make_unique<RecordBatch>();
     result_batch->num_rows = 1;
 
-    for (std::unique_ptr<GlobalAggregationFunction>& aggregation_function : aggregation_functions_) {
+    for (std::unique_ptr<GlobalAggregationFunction>& aggregation_function :
+         aggregation_functions_) {
         result_batch->columns.push_back(aggregation_function->Finalize());
     }
 
@@ -147,7 +149,9 @@ std::unique_ptr<RecordBatch> GroupByOperator::Run() {
 
             if (!new_group_indices.empty()) {
                 for (size_t k = 0; k < group_by_col_indices_.size(); ++k) {
-                    ExecutionHelper::CopySelection(*key_builders_[k], *batch->columns[group_by_col_indices_[k]], &new_group_indices);
+                    ExecutionHelper::CopySelection(*key_builders_[k],
+                                                   *batch->columns[group_by_col_indices_[k]],
+                                                   &new_group_indices);
                 }
             }
 
@@ -201,45 +205,27 @@ int Compare(const void* raw_data, uint32_t a, uint32_t b) {
     return 0;
 }
 
-std::unique_ptr<RecordBatch> OrderByOperator::Run() {
-    if (!accumulated_) {
-        while (auto batch = child_->Run()) {
-            if (accum_builders_.empty()) {
-                size_t sz = batch->columns.size();
-                for (size_t c = 0; c < sz; ++c) {
-                    accum_builders_.push_back(ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
-                    accum_types_.push_back(batch->columns[c]->GetType());
-                }
-                accum_num_rows_ = 0;
-            }
+void OrderByOperator::TrimCurBatch(bool is_final) {
+    if (accum_num_rows_ == 0) {
+        return;
+    }
 
-            const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
-            size_t sz = accum_builders_.size();
-            for (size_t c = 0; c < sz; ++c) {
-                ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
-            }
-            accum_num_rows_ += batch->num_rows;
-        }
+    auto temp_batch = std::make_unique<RecordBatch>();
+    temp_batch->num_rows = accum_num_rows_;
+    for (auto& builder : accum_builders_) {
+        temp_batch->columns.push_back(builder->Finish());
+    }
+    accum_builders_.clear();
 
-        if (!accum_builders_.empty()) {
-            // Finish builders into immutable columns for sorting
-            accumulated_batch_ = std::make_unique<RecordBatch>();
-            accumulated_batch_->num_rows = accum_num_rows_;
-            for (auto& builder : accum_builders_) {
-                accumulated_batch_->columns.push_back(builder->Finish());
-            }
-            accum_builders_.clear();
+    std::vector<size_t> indices(accum_num_rows_);
+    for (size_t i = 0; i < accum_num_rows_; ++i) {
+        indices[i] = i;
+    }
 
-            size_t sz = accumulated_batch_->num_rows;
-            indices_.reserve(sz);
-            for (uint32_t i = 0; i < sz; ++i) {
-                indices_.push_back(i);
-            }
-
-            std::vector<SortColumnInfo> cols_info;
-            cols_info.reserve(sort_columns_.size());
-            for (const auto& [col_ind, is_desc] : sort_columns_) {
-                const Column* raw_column = accumulated_batch_->columns[col_ind].get();
+    std::vector<SortColumnInfo> cols_info;
+    cols_info.reserve(sort_columns_.size());
+    for (const auto& [col_ind, is_desc] : sort_columns_) {
+        const Column* raw_column = temp_batch->columns[col_ind].get();
 
 #define HANDLE_TYPE(ENUM_VAL, STR_VAL, CLASS_TYPE)                      \
     case ColumnType::ENUM_VAL: {                                        \
@@ -247,50 +233,82 @@ std::unique_ptr<RecordBatch> OrderByOperator::Run() {
         cols_info.push_back({data_ptr, &Compare<CLASS_TYPE>, is_desc}); \
         break;                                                          \
     }
-                auto col_type = raw_column->GetType();
-                switch (col_type) {
-                    FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
-                    default: THROW_NOT_IMPLEMENTED;
-                }
+        auto col_type = raw_column->GetType();
+        switch (col_type) {
+            FOR_EACH_COLUMN_TYPE(HANDLE_TYPE);
+            default: THROW_NOT_IMPLEMENTED;
+        }
 #undef HANDLE_TYPE
-            }
-
-            auto cmp = [&cols_info](uint32_t a, uint32_t b) {
-                for (const auto& info : cols_info) {
-                    int res = info.cmp_func(info.raw_data, a, b);
-                    if (res != 0) {
-                        return info.is_desc ? (res > 0) : (res < 0);
-                    }
-                }
-                return false;
-            };
-
-            if (limit_.has_value() && limit_.value() < sz) {
-                uint32_t lim = limit_.value();
-                std::nth_element(indices_.begin(), indices_.begin() + lim, indices_.end(), cmp);
-                std::sort(indices_.begin(), indices_.begin() + lim, cmp);
-                indices_.resize(lim);
-                accumulated_batch_->num_rows = lim;
-            } else {
-                std::sort(indices_.begin(), indices_.end(), cmp);
-            }
-
-            auto sorted_batch = std::make_unique<RecordBatch>();
-            sorted_batch->num_rows = accumulated_batch_->num_rows;
-            for (size_t c = 0; c < accumulated_batch_->columns.size(); ++c) {
-                auto builder = ColumnFactory::MakeColumnBuilder(accumulated_batch_->columns[c]->GetType());
-                ExecutionHelper::CopySelection(*builder, *accumulated_batch_->columns[c], &indices_);
-                sorted_batch->columns.push_back(builder->Finish());
-            }
-            accumulated_batch_ = std::move(sorted_batch);
-
-            accumulated_ = true;
-        }
-        if (!accumulated_batch_) {
-            return nullptr;
-        }
-        return std::move(accumulated_batch_);
     }
+
+    auto cmp = [&cols_info](uint32_t a, uint32_t b) {
+        for (const auto& info : cols_info) {
+            int res = info.cmp_func(info.raw_data, a, b);
+            if (res != 0) {
+                return info.is_desc ? (res > 0) : (res < 0);
+            }
+        }
+        return false;
+    };
+
+    if (limit_.has_value() && accum_num_rows_ > limit_.value()) {
+        uint32_t lim = limit_.value();
+        std::nth_element(indices.begin(), indices.begin() + lim, indices.end(), cmp);
+        indices.resize(lim);
+    }
+    if (is_final) {
+        std::sort(indices.begin(), indices.end(), cmp);
+    }
+
+    for (auto type : accum_types_) {
+        accum_builders_.push_back(ColumnFactory::MakeColumnBuilder(type));
+    }
+    for (size_t c = 0; c < accum_builders_.size(); ++c) {
+        ExecutionHelper::CopySelection(*accum_builders_[c], *temp_batch->columns[c], &indices);
+    }
+    accum_num_rows_ = indices.size();
+}
+
+std::unique_ptr<RecordBatch> OrderByOperator::Run() {
+    if (accumulated_) {
+        return nullptr;
+    }
+
+    while (auto batch = child_->Run()) {
+        if (accum_builders_.empty()) {
+            for (size_t c = 0; c < batch->columns.size(); ++c) {
+                accum_builders_.push_back(
+                    ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
+                accum_types_.push_back(batch->columns[c]->GetType());
+            }
+            accum_num_rows_ = 0;
+        }
+
+        const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
+        for (size_t c = 0; c < accum_builders_.size(); ++c) {
+            ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
+        }
+        accum_num_rows_ += batch->num_rows;
+
+        if (limit_.has_value() && accum_num_rows_ > limit_.value() * 10) {
+            TrimCurBatch(false);
+        }
+    }
+
+    if (accum_num_rows_ > 0) {
+        TrimCurBatch(true);
+
+        auto final_batch = std::make_unique<RecordBatch>();
+        final_batch->num_rows = accum_num_rows_;
+        for (auto& builder : accum_builders_) {
+            final_batch->columns.push_back(builder->Finish());
+        }
+
+        accumulated_ = true;
+        return final_batch;
+    }
+
+    accumulated_ = true;
     return nullptr;
 }
 
@@ -316,9 +334,7 @@ std::unique_ptr<RecordBatch> LimitOperator::Run() {
         batch->num_rows = remaining;
         if (batch->selection_vector) {
             auto new_sel_vec = std::make_shared<std::vector<size_t>>(
-                batch->selection_vector->begin(),
-                batch->selection_vector->begin() + remaining
-            );
+                batch->selection_vector->begin(), batch->selection_vector->begin() + remaining);
             batch->selection_vector = std::move(new_sel_vec);
         } else {
             auto sel_vec = std::make_shared<std::vector<size_t>>(remaining);
