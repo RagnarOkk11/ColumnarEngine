@@ -93,11 +93,12 @@ public:
     }
 
     DataFrame OrderBy(std::vector<std::pair<std::string, bool>> order_by_columns,
-                      std::optional<size_t> limit = std::nullopt) {
+                      std::optional<size_t> limit = std::nullopt, std::optional<size_t> offset = std::nullopt) {
         auto order_by_node = std::make_shared<OrderByNode>();
         order_by_node->child = logical_plan_;
         order_by_node->order_by_columns = std::move(order_by_columns);
         order_by_node->limit = limit;
+        order_by_node->offset = offset;
         return DataFrame(order_by_node);
     }
 

@@ -88,7 +88,7 @@ class OrderByOperator : public Operator {
 public:
     OrderByOperator(std::unique_ptr<Operator> child,
                     std::vector<std::pair<size_t, bool>> sort_columns,
-                    std::optional<uint32_t> limit);
+                    std::optional<size_t> limit, std::optional<size_t> offset);
 
     std::unique_ptr<RecordBatch> Run() override;
 
@@ -104,6 +104,8 @@ private:
     std::vector<size_t> indices_;
     size_t current_idx_ = 0;
     std::optional<size_t> limit_;
+    std::optional<size_t> offset_;
+    std::optional<size_t> total_limit_;
     bool accumulated_ = false;
 };
 

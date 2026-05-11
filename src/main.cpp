@@ -301,7 +301,18 @@ public:
     // AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer <> '' GROUP BY
     // k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;
     void Query28() {
-        THROW_NOT_IMPLEMENTED;
+        auto df =
+            DataFrame::Select(columnar_file_path_, {"Referer"})
+                .Filter(NotEq("Referer", ""))
+                .Project({RegexpReplace("Referer", "^https?://(?:www\\.)?([^/]+)/.*$", "\\1", "k"),
+                          Length("Referer", "length_ref")})
+                .Aggregate({"k"},
+                           {Avg("length_ref", "l"), Count("*", "c"), Min("Referer", "min_ref")})
+                .Filter(Greater<int64_t>("c", 100000))
+                .OrderBy({{"l", true}}, 25)
+                .Collect();
+
+        df.Display();
     }
 
     // WARNING: DataFrame::Display output does not affect that query
@@ -437,6 +448,121 @@ public:
         df.Display();
     }
 
+    // SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >=
+    // '2013-07-01' AND EventDate <= '2013-07-31' AND DontCountHits = 0 AND IsRefresh = 0 AND URL <>
+    // '' GROUP BY URL ORDER BY PageViews DESC LIMIT 10;
+    void Query36() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Filter(NotEq("URL", ""))
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("DontCountHits", 0))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Aggregate({"URL"}, {Count("*", "PageViews")})
+                      .OrderBy({{"PageViews", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT Title, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >=
+    // '2013-07-01' AND EventDate <= '2013-07-31' AND DontCountHits = 0 AND IsRefresh = 0 AND Title
+    // <> '' GROUP BY Title ORDER BY PageViews DESC LIMIT 10;
+    void Query37() {
+        auto df = DataFrame::Select(columnar_file_path_, {"Title"})
+                      .Filter(NotEq("Title", ""))
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("DontCountHits", 0))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Aggregate({"Title"}, {Count("*", "PageViews")})
+                      .OrderBy({{"PageViews", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >=
+    // '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND IsLink <> 0 AND IsDownload =
+    // 0 GROUP BY URL ORDER BY PageViews DESC LIMIT 10 OFFSET 1000;
+    void Query38() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Filter(NotEq<int16_t>("IsLink", 0))
+                      .Filter(Eq<int16_t>("IsDownload", 0))
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Aggregate({"URL"}, {Count("*", "PageViews")})
+                      .OrderBy({{"PageViews", true}}, 10, 1000)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND
+    // AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews FROM hits
+    // WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND
+    // IsRefresh = 0 GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst ORDER BY
+    // PageViews DESC LIMIT 10 OFFSET 1000;
+    void Query39() {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {})
+                .Filter(Eq<int32_t>("CounterID", 62))
+                .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                .Filter(Eq<int16_t>("IsRefresh", 0))
+                .Project({CaseWhen<std::string>(
+                    "Src", And(Eq<int16_t>("SearchEngineID", 0), Eq<int16_t>("AdvEngineID", 0)),
+                    ColRef("Referer"), Literal<std::string>("dummy_name", ""), ColumnType::STRING)})
+                .Aggregate({"TraficSourceID", "SearchEngineID", "AdvEngineID", "Src", "URL"},
+                           {Count("*", "PageViews")})
+                .OrderBy({{"PageViews", true}}, 10, 1000)
+                .Collect();
+
+        df.Display();
+    }
+
+    // TODO:
+    // SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate
+    // >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6)
+    // AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC
+    // LIMIT 10 OFFSET 100;
+    void Query40() const {
+        THROW_NOT_IMPLEMENTED;
+    }
+
+    // SELECT WindowClientWidth, WindowClientHeight, COUNT(*) AS PageViews FROM hits WHERE CounterID
+    // = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND
+    // DontCountHits = 0 AND URLHash = 2868770270353813622 GROUP BY WindowClientWidth,
+    // WindowClientHeight ORDER BY PageViews DESC LIMIT 10 OFFSET 10000;
+    void Query41() const {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {})
+                .Filter(Eq<int64_t>("URLHash", 2868770270353813622))
+                .Filter(Eq<int32_t>("CounterID", 62))
+                .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                .Filter(Eq<int16_t>("IsRefresh", 0))
+                .Filter(Eq<int16_t>("DontCountHits", 0))
+                .Aggregate({"WindowClientWidth", "WindowClientHeight"}, {Count("*", "PageViews")})
+                .OrderBy({{"PageViews", true}}, 10, 10000)
+                .Collect();
+
+        df.Display();
+    }
+
+    // TODO:
+    // SELECT DATE_TRUNC('minute', EventTime) AS M, COUNT(*) AS PageViews FROM hits WHERE CounterID
+    // = 62 AND EventDate >= '2013-07-14' AND EventDate <= '2013-07-15' AND IsRefresh = 0 AND
+    // DontCountHits = 0 GROUP BY DATE_TRUNC('minute', EventTime) ORDER BY DATE_TRUNC('minute',
+    // EventTime) LIMIT 10 OFFSET 1000;
+    void Query42() const {
+        THROW_NOT_IMPLEMENTED;
+    }
+
     void RunQuery(int query_number) {
         switch (query_number) {
             case 0: Query00(); break;
@@ -475,6 +601,13 @@ public:
             case 33: Query33(); break;
             case 34: Query34(); break;
             case 35: Query35(); break;
+            case 36: Query36(); break;
+            case 37: Query37(); break;
+            case 38: Query38(); break;
+            case 39: Query39(); break;
+            case 40: Query40(); break;
+            case 41: Query41(); break;
+            case 42: Query42(); break;
 
             default: THROW_RUNTIME_ERROR("Unknown query number: " + std::to_string(query_number));
         }

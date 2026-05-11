@@ -64,6 +64,7 @@ struct OrderByNode : public PlanNode {
     std::shared_ptr<PlanNode> child;
     std::vector<std::pair<std::string, bool>> order_by_columns;
     std::optional<size_t> limit;
+    std::optional<size_t> offset;
 };
 
 struct LimitNode : public PlanNode {
@@ -253,7 +254,7 @@ inline PhysicalOperatorContext BuildPhysicalPlan(
 
             auto op = std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
                                                         std::move(sort_columns),
-                                                        std::move(order_by->limit));
+                                                        std::move(order_by->limit), std::move(order_by->offset));
             return {std::move(op), std::move(child_context.schema)};
         }
 

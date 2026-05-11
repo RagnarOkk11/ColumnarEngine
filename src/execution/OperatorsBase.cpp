@@ -180,8 +180,19 @@ std::unique_ptr<RecordBatch> GroupByOperator::Run() {
 
 OrderByOperator::OrderByOperator(std::unique_ptr<Operator> child,
                                  std::vector<std::pair<size_t, bool>> sort_columns,
-                                 std::optional<uint32_t> limit)
-    : child_(std::move(child)), sort_columns_(std::move(sort_columns)), limit_(limit) {
+                                 std::optional<size_t> limit, std::optional<size_t> offset)
+    : child_(std::move(child)),
+      sort_columns_(std::move(sort_columns)),
+      limit_(limit),
+      offset_(offset) {
+    total_limit_ = limit_;
+    if (total_limit_.has_value()) {
+        if (offset_.has_value()) {
+            total_limit_.value() += offset_.value();
+        }
+    } else {
+        total_limit_ = offset_;
+    }
 }
 
 using CompareFunc = int (*)(const void*, uint32_t, uint32_t);
@@ -203,6 +214,49 @@ int Compare(const void* raw_data, uint32_t a, uint32_t b) {
         return 1;
     }
     return 0;
+}
+
+std::unique_ptr<RecordBatch> OrderByOperator::Run() {
+    if (accumulated_) {
+        return nullptr;
+    }
+
+    while (auto batch = child_->Run()) {
+        if (accum_builders_.empty()) {
+            for (size_t c = 0; c < batch->columns.size(); ++c) {
+                accum_builders_.push_back(
+                    ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
+                accum_types_.push_back(batch->columns[c]->GetType());
+            }
+            accum_num_rows_ = 0;
+        }
+
+        const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
+        for (size_t c = 0; c < accum_builders_.size(); ++c) {
+            ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
+        }
+        accum_num_rows_ += batch->num_rows;
+
+        if (total_limit_.has_value() && accum_num_rows_ > total_limit_.value() * 10) {
+            TrimCurBatch(false);
+        }
+    }
+
+    if (accum_num_rows_ > 0) {
+        TrimCurBatch(true);
+
+        auto final_batch = std::make_unique<RecordBatch>();
+        final_batch->num_rows = accum_num_rows_;
+        for (auto& builder : accum_builders_) {
+            final_batch->columns.push_back(builder->Finish());
+        }
+
+        accumulated_ = true;
+        return final_batch;
+    }
+
+    accumulated_ = true;
+    return nullptr;
 }
 
 void OrderByOperator::TrimCurBatch(bool is_final) {
@@ -251,13 +305,20 @@ void OrderByOperator::TrimCurBatch(bool is_final) {
         return false;
     };
 
-    if (limit_.has_value() && accum_num_rows_ > limit_.value()) {
-        uint32_t lim = limit_.value();
+    if (total_limit_.has_value() && accum_num_rows_ > total_limit_.value()) {
+        uint32_t lim = total_limit_.value();
         std::nth_element(indices.begin(), indices.begin() + lim, indices.end(), cmp);
         indices.resize(lim);
     }
     if (is_final) {
         std::sort(indices.begin(), indices.end(), cmp);
+        if (offset_.has_value()) {
+            if (offset_.value() < indices.size()) {
+                indices.erase(indices.begin(), indices.begin() + offset_.value());
+            } else {
+                indices.clear();
+            }
+        }
     }
 
     for (auto type : accum_types_) {
@@ -267,49 +328,6 @@ void OrderByOperator::TrimCurBatch(bool is_final) {
         ExecutionHelper::CopySelection(*accum_builders_[c], *temp_batch->columns[c], &indices);
     }
     accum_num_rows_ = indices.size();
-}
-
-std::unique_ptr<RecordBatch> OrderByOperator::Run() {
-    if (accumulated_) {
-        return nullptr;
-    }
-
-    while (auto batch = child_->Run()) {
-        if (accum_builders_.empty()) {
-            for (size_t c = 0; c < batch->columns.size(); ++c) {
-                accum_builders_.push_back(
-                    ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
-                accum_types_.push_back(batch->columns[c]->GetType());
-            }
-            accum_num_rows_ = 0;
-        }
-
-        const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
-        for (size_t c = 0; c < accum_builders_.size(); ++c) {
-            ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
-        }
-        accum_num_rows_ += batch->num_rows;
-
-        if (limit_.has_value() && accum_num_rows_ > limit_.value() * 10) {
-            TrimCurBatch(false);
-        }
-    }
-
-    if (accum_num_rows_ > 0) {
-        TrimCurBatch(true);
-
-        auto final_batch = std::make_unique<RecordBatch>();
-        final_batch->num_rows = accum_num_rows_;
-        for (auto& builder : accum_builders_) {
-            final_batch->columns.push_back(builder->Finish());
-        }
-
-        accumulated_ = true;
-        return final_batch;
-    }
-
-    accumulated_ = true;
-    return nullptr;
 }
 
 LimitOperator::LimitOperator(std::unique_ptr<Operator> child, size_t limit)

@@ -20,12 +20,12 @@ public:
         std::vector<size_t> selection_vector;
         selection_vector.reserve(batch.num_rows);
 
-        AggExpHelper::IterateColumnData<ColumnT>(
-            batch, column_ind_, [&](const auto& value, size_t, size_t real_ind) {
-                if (value != target_val_) {
-                    selection_vector.push_back(real_ind);
-                }
-            });
+        AggExpHelper::IterateColumnData<ColumnT>(batch, column_ind_,
+                                                 [&](const auto& value, size_t, size_t real_ind) {
+                                                     if (value != target_val_) {
+                                                         selection_vector.push_back(real_ind);
+                                                     }
+                                                 });
         return selection_vector;
     }
 
@@ -45,12 +45,12 @@ public:
         std::vector<size_t> selection_vector;
         selection_vector.reserve(batch.num_rows);
 
-        AggExpHelper::IterateColumnData<ColumnT>(
-            batch, column_ind_, [&](const auto& value, size_t, size_t real_ind) {
-                if (value == target_val_) {
-                    selection_vector.push_back(real_ind);
-                }
-            });
+        AggExpHelper::IterateColumnData<ColumnT>(batch, column_ind_,
+                                                 [&](const auto& value, size_t, size_t real_ind) {
+                                                     if (value == target_val_) {
+                                                         selection_vector.push_back(real_ind);
+                                                     }
+                                                 });
         return selection_vector;
     }
 
@@ -70,12 +70,62 @@ public:
         std::vector<size_t> selection_vector;
         selection_vector.reserve(batch.num_rows);
 
-        AggExpHelper::IterateColumnData<ColumnT>(
-            batch, column_ind_, [&](const auto& value, size_t, size_t real_ind) {
-                if (value > target_val_) {
-                    selection_vector.push_back(real_ind);
-                }
-            });
+        AggExpHelper::IterateColumnData<ColumnT>(batch, column_ind_,
+                                                 [&](const auto& value, size_t, size_t real_ind) {
+                                                     if (value > target_val_) {
+                                                         selection_vector.push_back(real_ind);
+                                                     }
+                                                 });
+        return selection_vector;
+    }
+
+private:
+    size_t column_ind_;
+    ValueType target_val_;
+};
+
+template <typename ColumnT, typename ValueType>
+class GreaterEqFilterFunction : public FilterFunction {
+public:
+    GreaterEqFilterFunction(size_t column_ind, ValueType target_val)
+        : column_ind_(column_ind), target_val_(std::move(target_val)) {
+    }
+
+    std::vector<size_t> Evaluate(const RecordBatch& batch) override {
+        std::vector<size_t> selection_vector;
+        selection_vector.reserve(batch.num_rows);
+
+        AggExpHelper::IterateColumnData<ColumnT>(batch, column_ind_,
+                                                 [&](const auto& value, size_t, size_t real_ind) {
+                                                     if (value >= target_val_) {
+                                                         selection_vector.push_back(real_ind);
+                                                     }
+                                                 });
+        return selection_vector;
+    }
+
+private:
+    size_t column_ind_;
+    ValueType target_val_;
+};
+
+template <typename ColumnT, typename ValueType>
+class LessEqFilterFunction : public FilterFunction {
+public:
+    LessEqFilterFunction(size_t column_ind, ValueType target_val)
+        : column_ind_(column_ind), target_val_(std::move(target_val)) {
+    }
+
+    std::vector<size_t> Evaluate(const RecordBatch& batch) override {
+        std::vector<size_t> selection_vector;
+        selection_vector.reserve(batch.num_rows);
+
+        AggExpHelper::IterateColumnData<ColumnT>(batch, column_ind_,
+                                                 [&](const auto& value, size_t, size_t real_ind) {
+                                                     if (value <= target_val_) {
+                                                         selection_vector.push_back(real_ind);
+                                                     }
+                                                 });
         return selection_vector;
     }
 
@@ -134,4 +184,23 @@ private:
     ValueType pattern_;
 };
 
+class AndFilterFunction : public FilterFunction {
+public:
+    AndFilterFunction(std::unique_ptr<FilterFunction> left, std::unique_ptr<FilterFunction> right)
+        : left_(std::move(left)), right_(std::move(right)) {
+    }
 
+    std::vector<size_t> Evaluate(const RecordBatch& batch) override {
+        std::vector<size_t> left_res = left_->Evaluate(batch);
+        std::vector<size_t> right_res = right_->Evaluate(batch);
+
+        std::vector<size_t> result;
+        std::set_intersection(left_res.begin(), left_res.end(), right_res.begin(), right_res.end(),
+                              std::back_inserter(result));
+        return result;
+    }
+
+private:
+    std::unique_ptr<FilterFunction> left_;
+    std::unique_ptr<FilterFunction> right_;
+};
