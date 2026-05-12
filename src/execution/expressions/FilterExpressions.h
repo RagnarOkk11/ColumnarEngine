@@ -234,6 +234,27 @@ private:
     std::shared_ptr<FilterExpression> right_;
 };
 
+class OrExpression : public FilterExpression {
+public:
+    OrExpression(std::shared_ptr<FilterExpression> left, std::shared_ptr<FilterExpression> right)
+        : FilterExpression(""), left_(std::move(left)), right_(std::move(right)) {
+    }
+
+    void CollectRequiredColumns(std::vector<std::string>& required_columns) override {
+        left_->CollectRequiredColumns(required_columns);
+        right_->CollectRequiredColumns(required_columns);
+    }
+
+    std::unique_ptr<FilterFunction> CreateFilterFunction(const Schema& child_schema) override {
+        return std::make_unique<OrFilterFunction>(left_->CreateFilterFunction(child_schema),
+                                                   right_->CreateFilterFunction(child_schema));
+    }
+
+private:
+    std::shared_ptr<FilterExpression> left_;
+    std::shared_ptr<FilterExpression> right_;
+};
+
 template <typename T>
 inline std::shared_ptr<FilterExpression> NotEq(const std::string& column_name, T target_val) {
     if constexpr (std::is_convertible_v<T, std::string_view>) {
@@ -304,4 +325,8 @@ inline std::shared_ptr<FilterExpression> NotLike(const std::string& column_name,
 
 inline std::shared_ptr<FilterExpression> And(std::shared_ptr<FilterExpression> left, std::shared_ptr<FilterExpression> right) {
     return std::make_shared<AndExpression>(std::move(left), std::move(right));
+}
+
+inline std::shared_ptr<FilterExpression> Or(std::shared_ptr<FilterExpression> left, std::shared_ptr<FilterExpression> right) {
+    return std::make_shared<OrExpression>(std::move(left), std::move(right));
 }

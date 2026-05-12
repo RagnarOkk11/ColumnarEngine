@@ -51,6 +51,7 @@ add_executable(columnar-engine
         execution/expressions/AggExpHelper.h
         types/String.h
         column/ColumnView.h
+        types/TimeUnit.h
 )
 
 target_link_libraries(columnar-engine PRIVATE project_includes)

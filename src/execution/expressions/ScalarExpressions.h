@@ -1,7 +1,8 @@
 #pragma once
 
-#include "execution/expressions/ScalarFunctions.h"
 #include "column/Schema.h"
+#include "execution/expressions/ScalarFunctions.h"
+#include "types/TimeUnit.h"
 
 #include <memory>
 #include <string>
@@ -32,6 +33,7 @@ protected:
     std::string output_name_;
 };
 
+// // TODO: remove ExtractMinute, make Extract with uniform interface (like TruncateFunction)
 class ExtractMinuteExpression : public ScalarExpression {
 public:
     explicit ExtractMinuteExpression(std::string column_name, std::string output_name = "")
@@ -53,6 +55,33 @@ public:
         child_schema.AddColumn(GetOutputName(), ColumnType::INT32);
         return std::make_unique<ExtractMinuteFunction>(ind);
     }
+};
+
+class TimeTruncExpression : public ScalarExpression {
+public:
+    TimeTruncExpression(std::string column_name, std::string date_part, std::string output_name = "")
+        : ScalarExpression(std::move(column_name), std::move(output_name)),
+          date_part_str_(std::move(date_part)) {}
+
+    std::string GetOutputName() const override {
+        return output_name_.empty() ? "date_trunc_" + column_name_ : output_name_;
+    }
+
+    std::unique_ptr<ScalarFunction> CreateScalarFunction(Schema& child_schema) override {
+        size_t ind = child_schema.GetColumnIndexByName(column_name_);
+        ColumnType type = child_schema.GetColumnTypeByName(column_name_);
+
+        if (type != ColumnType::TIMESTAMP && type != ColumnType::DATE) [[unlikely]] {
+            THROW_RUNTIME_ERROR("DATE_TRUNC requires TIMESTAMP or DATE column");
+        }
+
+        TimeUnitType part = TimeUnit::ParseTimeUnit(date_part_str_);
+        child_schema.AddColumn(GetOutputName(), type);
+        return std::make_unique<TimeTruncFunction>(ind, part);
+    }
+
+private:
+    std::string date_part_str_;
 };
 
 class LengthExpression : public ScalarExpression {
@@ -218,9 +247,12 @@ private:
 
 class RegexpReplaceExpression : public ScalarExpression {
 public:
-    RegexpReplaceExpression(std::string column_name, std::string pattern, std::string replacement, std::string output_name = "")
+    RegexpReplaceExpression(std::string column_name, std::string pattern, std::string replacement,
+                            std::string output_name = "")
         : ScalarExpression(std::move(column_name), std::move(output_name)),
-          pattern_(std::move(pattern)), replacement_(std::move(replacement)) {}
+          pattern_(std::move(pattern)),
+          replacement_(std::move(replacement)) {
+    }
 
     std::unique_ptr<ScalarFunction> CreateScalarFunction(Schema& child_schema) override {
         size_t ind = child_schema.GetColumnIndexByName(column_name_);
@@ -242,6 +274,12 @@ private:
 inline std::shared_ptr<ScalarExpression> ExtractMinute(std::string column_name,
                                                        std::string output_name = "") {
     return std::make_shared<ExtractMinuteExpression>(std::move(column_name),
+                                                     std::move(output_name));
+}
+
+inline std::shared_ptr<ScalarExpression> TimeTrunc(std::string column_name, std::string date_part,
+                                                       std::string output_name = "") {
+    return std::make_shared<TimeTruncExpression>(std::move(column_name), std::move(date_part),
                                                      std::move(output_name));
 }
 
@@ -277,8 +315,9 @@ inline std::shared_ptr<ScalarExpression> CaseWhen(std::string output_name,
                                                               std::move(false_expr), return_type);
 }
 
-inline std::shared_ptr<ScalarExpression> RegexpReplace(
-    std::string column_name, std::string pattern, std::string replacement, std::string output_name = "") {
+inline std::shared_ptr<ScalarExpression> RegexpReplace(std::string column_name, std::string pattern,
+                                                       std::string replacement,
+                                                       std::string output_name = "") {
     return std::make_shared<RegexpReplaceExpression>(
         std::move(column_name), std::move(pattern), std::move(replacement), std::move(output_name));
 }

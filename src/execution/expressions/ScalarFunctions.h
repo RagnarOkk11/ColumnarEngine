@@ -16,6 +16,7 @@ public:
     virtual std::shared_ptr<Column> Evaluate(const RecordBatch& batch) = 0;
 };
 
+// TODO: remove ExtractMinute, make Extract with uniform interface (like TruncateFunction)
 class ExtractMinuteFunction : public ScalarFunction {
 public:
     explicit ExtractMinuteFunction(size_t col_ind) : col_ind_(col_ind) {
@@ -35,6 +36,28 @@ public:
 
 private:
     size_t col_ind_;
+};
+
+class TimeTruncFunction : public ScalarFunction {
+public:
+    TimeTruncFunction(size_t col_ind, TimeUnitType part) : col_ind_(col_ind), part_(part) {
+    }
+
+    std::shared_ptr<Column> Evaluate(const RecordBatch& batch) override {
+        size_t physical_size = batch.columns[0]->Size();
+        std::vector<int64_t> result_data(physical_size);
+
+        AggExpHelper::IterateColumnData<TimestampColumn>(
+            batch, col_ind_, [&](const auto& value, size_t, size_t real_ind) {
+                result_data[real_ind] = Timestamp::Truncate(value, part_);
+            });
+
+        return std::make_shared<TimestampColumn>(std::move(result_data));
+    }
+
+private:
+    size_t col_ind_;
+    TimeUnitType part_;
 };
 
 class LengthFunction : public ScalarFunction {

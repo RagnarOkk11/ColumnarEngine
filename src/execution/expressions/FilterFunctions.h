@@ -195,8 +195,31 @@ public:
         std::vector<size_t> right_res = right_->Evaluate(batch);
 
         std::vector<size_t> result;
+        result.reserve(left_res.size() + right_res.size());
         std::set_intersection(left_res.begin(), left_res.end(), right_res.begin(), right_res.end(),
                               std::back_inserter(result));
+        return result;
+    }
+
+private:
+    std::unique_ptr<FilterFunction> left_;
+    std::unique_ptr<FilterFunction> right_;
+};
+
+class OrFilterFunction : public FilterFunction {
+public:
+    OrFilterFunction(std::unique_ptr<FilterFunction> left, std::unique_ptr<FilterFunction> right)
+        : left_(std::move(left)), right_(std::move(right)) {
+    }
+
+    std::vector<size_t> Evaluate(const RecordBatch& batch) override {
+        std::vector<size_t> left_res = left_->Evaluate(batch);
+        std::vector<size_t> right_res = right_->Evaluate(batch);
+
+        std::vector<size_t> result;
+        result.reserve(left_res.size() + right_res.size());
+        std::set_union(left_res.begin(), left_res.end(), right_res.begin(), right_res.end(),
+                       std::back_inserter(result));
         return result;
     }
 

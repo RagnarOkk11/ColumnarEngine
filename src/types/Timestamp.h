@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Date.h"
+#include "TimeUnit.h"
 
-#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -59,11 +59,45 @@ struct Timestamp {
         return res;
     }
 
+    // TODO: make uniform interface called Extract
     static int32_t ExtractMinute(int64_t total_seconds) {
         int64_t seconds_in_day = total_seconds % 86400;
         if (seconds_in_day < 0) {
             seconds_in_day += 86400;
         }
         return (seconds_in_day % 3600) / 60;
+    }
+
+    static int64_t Truncate(int64_t total_seconds, TimeUnitType part) {
+        int64_t seconds_in_day = total_seconds % 86400;
+        if (seconds_in_day < 0) {
+            seconds_in_day += 86400;
+        }
+
+        switch (part) {
+            case TimeUnitType::MINUTE: {
+                int64_t extra_seconds = seconds_in_day % 60;
+                return total_seconds - extra_seconds;
+            }
+            case TimeUnitType::HOUR: {
+                int64_t extra_seconds = seconds_in_day % 3600;
+                return total_seconds - extra_seconds;
+            }
+            case TimeUnitType::DAY: {
+                return total_seconds - seconds_in_day;
+            }
+            case TimeUnitType::MONTH: {
+                int32_t days = total_seconds / 86400;
+                int32_t trunc = Date::Truncate(days, TimeUnitType::MONTH);
+                return static_cast<int64_t>(trunc) * 86400;
+            }
+            case TimeUnitType::YEAR: {
+                int32_t days = total_seconds / 86400;
+                int32_t trunc = Date::Truncate(days, TimeUnitType::YEAR);
+                return static_cast<int64_t>(trunc) * 86400;
+            }
+            default: break;
+        }
+        return total_seconds;
     }
 };

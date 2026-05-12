@@ -525,13 +525,23 @@ public:
         df.Display();
     }
 
-    // TODO:
     // SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate
     // >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6)
     // AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC
     // LIMIT 10 OFFSET 100;
     void Query40() const {
-        THROW_NOT_IMPLEMENTED;
+        auto df =
+            DataFrame::Select(columnar_file_path_, {"Title"})
+                .Filter(Eq<int64_t>("RefererHash", 3594120000172545465))
+                .Filter(Eq<int32_t>("CounterID", 62))
+                .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                .Filter(Eq<int16_t>("IsRefresh", 0))
+                .Filter(Or(Eq<int16_t>("TraficSourceID", -1), Eq<int16_t>("TraficSourceID", 6)))
+                .Aggregate({"URLHash", "EventDate"}, {Count("*", "PageViews")})
+                .OrderBy({{"PageViews", true}}, 10, 100)
+                .Collect();
+        df.Display();
     }
 
     // SELECT WindowClientWidth, WindowClientHeight, COUNT(*) AS PageViews FROM hits WHERE CounterID
@@ -554,13 +564,23 @@ public:
         df.Display();
     }
 
-    // TODO:
     // SELECT DATE_TRUNC('minute', EventTime) AS M, COUNT(*) AS PageViews FROM hits WHERE CounterID
     // = 62 AND EventDate >= '2013-07-14' AND EventDate <= '2013-07-15' AND IsRefresh = 0 AND
     // DontCountHits = 0 GROUP BY DATE_TRUNC('minute', EventTime) ORDER BY DATE_TRUNC('minute',
     // EventTime) LIMIT 10 OFFSET 1000;
     void Query42() const {
-        THROW_NOT_IMPLEMENTED;
+        auto df = DataFrame::Select(columnar_file_path_, {})
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Filter(Eq<int16_t>("DontCountHits", 0))
+                      .Project({TimeTrunc("EventTime", "minute", "M")})
+                      .Aggregate({"M"}, {Count("*", "PageViews")})
+                      .OrderBy({{"M", false}}, 10, 1000)
+                      .Collect();
+
+        df.Display();
     }
 
     void RunQuery(int query_number) {
