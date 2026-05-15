@@ -1,3 +1,33 @@
+build
+release*
+tsan*
+asan*
+__pycache__
+.idea
+perf.data*
+cmake-build-*
+.submit-repo/
+CMakeSettings.json
+CppProperties.json
+.vs/
+build_asan
+.DS_Store
+.cache/
+*.pdf
+compile_commands.json
+.clangd
+test_csv
+test.csv
+test_csv2
+test_main.cpp
+hits_sample.csv
+columnar_hits_sample.tuff
+report.txt
+docker-test
+docker-test-results
+.vscode/
+src/project_bundle.txt
+
 # Prerequisites
 *.d
 
