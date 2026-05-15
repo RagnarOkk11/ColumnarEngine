@@ -72,17 +72,6 @@ public:
         return Schema(std::move(fields));
     }
 
-    static Schema FromColumnarFile(const std::string&  columnar_file_path) {
-        ColumnarReader reader(columnar_file_path);
-        const std::vector<ColumnMetadata> metadata = reader.GetMetadata();
-
-        std::vector<Field> fields;
-        for (const ColumnMetadata& meta : metadata) {
-            fields.push_back({meta.name, meta.type});
-        }
-        return Schema(std::move(fields));
-    }
-
 private:
     std::vector<Field> fields_;
 

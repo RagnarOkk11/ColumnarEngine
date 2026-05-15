@@ -8,36 +8,41 @@
 #include <numeric>
 
 ScanOperator::ScanOperator(const std::string& table_path,
-                           const std::vector<std::string>& column_names)
-    : reader_(table_path) {
-    const std::vector<ColumnMetadata>& metadata = reader_.GetMetadata();
+                           const std::vector<std::string>& column_names,
+                           std::shared_ptr<const MetadataTable> metadata)
+    : reader_(table_path, metadata), metadata_(metadata) {
+    const auto& full_columns = metadata_->GetColumns();
 
-    if (column_names == std::vector<std::string>{"*"}) {
-        for (size_t i = 0; i < metadata.size(); ++i) {
-            column_indices_.push_back(i);
+    for (const std::string& name : column_names) {
+        bool found = false;
+        for (size_t i = 0; i < full_columns.size(); ++i) {
+            if (full_columns[i].name == name) {
+                column_indices_.push_back(i);
+                found = true;
+                break;
+            }
         }
-    } else {
-        for (const auto& name : column_names) {
-            bool found = false;
-            for (size_t i = 0; i < metadata.size(); ++i) {
-                if (metadata[i].name == name) {
-                    column_indices_.push_back(i);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                THROW_RUNTIME_ERROR("Column " + name + " not found in metadata");
-            }
+        if (!found) {
+            THROW_RUNTIME_ERROR("Column " + name + " not found in metadata");
         }
     }
 
-    if (!metadata.empty()) {
-        total_chunks_ = metadata[0].offsets.size();
+    if (!full_columns.empty()) {
+        total_chunks_ = full_columns[0].offsets.size();
     }
 }
 
 std::unique_ptr<RecordBatch> ScanOperator::Run() {
+    if (column_indices_.empty()) {
+        if (finished_empty_scan_) {
+            return nullptr;
+        }
+        auto record_batch = std::make_unique<RecordBatch>();
+        record_batch->num_rows = metadata_->GetNumRows();
+        finished_empty_scan_ = true;
+        return record_batch;
+    }
+
     if (current_chunk_ >= total_chunks_) {
         return nullptr;
     }

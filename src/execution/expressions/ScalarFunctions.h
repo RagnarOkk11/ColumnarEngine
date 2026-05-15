@@ -159,8 +159,8 @@ public:
 
         auto build_view = [&](const ResolvedBranch& b) -> ViewType {
             if (std::holds_alternative<size_t>(b)) {
-                size_t col_idx = std::get<size_t>(b);
-                auto* col = static_cast<const ColumnClass*>(batch.columns[col_idx].get());
+                size_t col_ind = std::get<size_t>(b);
+                auto* col = static_cast<const ColumnClass*>(batch.columns[col_ind].get());
                 return FlatColumnView<ContainerType, ReturnType>(&col->GetData());
             } else {
                 return ConstColumnView<ReturnType>(std::get<ConstantType>(b));

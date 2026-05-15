@@ -28,15 +28,18 @@ public:
 
 class ScanOperator : public Operator {
 public:
-    ScanOperator(const std::string& table_path, const std::vector<std::string>& column_names);
+    ScanOperator(const std::string& table_path, const std::vector<std::string>& column_names,
+                 std::shared_ptr<const MetadataTable> metadata);
 
     std::unique_ptr<RecordBatch> Run() override;
 
 private:
     ColumnarReader reader_;
+    std::shared_ptr<const MetadataTable> metadata_;
     std::vector<size_t> column_indices_;
     size_t current_chunk_ = 0;
     size_t total_chunks_ = 0;
+    bool finished_empty_scan_ = false;
 };
 
 class AggregationOperator : public Operator {
@@ -87,8 +90,8 @@ private:
 class OrderByOperator : public Operator {
 public:
     OrderByOperator(std::unique_ptr<Operator> child,
-                    std::vector<std::pair<size_t, bool>> sort_columns,
-                    std::optional<size_t> limit, std::optional<size_t> offset);
+                    std::vector<std::pair<size_t, bool>> sort_columns, std::optional<size_t> limit,
+                    std::optional<size_t> offset);
 
     std::unique_ptr<RecordBatch> Run() override;
 

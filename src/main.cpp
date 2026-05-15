@@ -19,7 +19,7 @@ public:
     // SELECT COUNT(*) FROM hits WHERE AdvEngineID <> 0;
     void Query01() {
         auto df = DataFrame::Select(columnar_file_path_, {})
-                      .Filter(NotEq("AdvEngineID", 0))
+                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
                       .Aggregate({}, {Count()})
                       .Collect();
 
@@ -77,7 +77,7 @@ public:
     // COUNT(*) DESC;
     void Query07() {
         auto df = DataFrame::Select(columnar_file_path_, {"AdvEngineID"})
-                      .Filter(NotEq("AdvEngineID", 0))
+                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
                       .Aggregate({"AdvEngineID"}, {Count()})
                       .OrderBy({{"count", true}})
                       .Collect();

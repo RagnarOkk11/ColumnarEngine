@@ -26,6 +26,7 @@ add_executable(columnar-engine
         execution/OperatorsBase.h
         column/Codec.h
         execution/ExecutionLogic.h
+        execution/ExecutionLogic.cpp
         execution/expressions/AggregationFunctions.h
         column/Schema.h
         utils/Macro.h
