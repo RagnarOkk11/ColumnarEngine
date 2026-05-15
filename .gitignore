@@ -22,8 +22,11 @@ test_csv2
 test_main.cpp
 hits_sample.csv
 columnar_hits_sample.tuff
-
-
+report.txt
+docker-test
+docker-test-results
+.vscode/
+src/project_bundle.txt
 
 # Prerequisites
 *.d
