@@ -7,6 +7,7 @@
 #include <catch.hpp>
 #include <fstream>
 #include <filesystem>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -83,8 +84,8 @@ TEST_CASE("Reader: Read metadata", "[Reader]") {
     CsvToColumnar::Convert(csv_path, output_path);
 
     SECTION("Read and verify metadata") {
-        ColumnarReader reader(output_path);
-        const auto& metadata = reader.GetMetadata();
+        auto meta = std::make_shared<MetadataTable>(output_path);
+        const auto& metadata = meta->GetColumns();
 
         REQUIRE(metadata.size() == 2);
         REQUIRE(metadata[0].name == "id");
@@ -107,7 +108,8 @@ TEST_CASE("Reader: Read typed column data", "[Reader]") {
 
     CsvToColumnar::Convert(csv_path, output_path);
 
-    ColumnarReader reader(output_path);
+    auto meta = std::make_shared<MetadataTable>(output_path);
+    ColumnarReader reader(output_path, meta);
 
     SECTION("Read INT32 column") {
         auto column = reader.GetColumnData(0, 0);
