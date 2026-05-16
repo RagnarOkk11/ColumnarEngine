@@ -5,6 +5,9 @@
 #include "utils/Macro.h"
 
 #include <array>
+#include <fcntl.h>
+#include <fstream>
+#include <unistd.h>
 
 void MetadataTable::ParseMetadata(const std::string& file_path) {
     std::ifstream file(file_path, std::ios::binary);
@@ -81,9 +84,16 @@ void MetadataTable::ParseMetadata(const std::string& file_path) {
 
 ColumnarReader::ColumnarReader(const std::string& file_name,
                                std::shared_ptr<const MetadataTable> meta)
-    : file_(file_name, std::ios::binary), metadata_(std::move(meta)) {
-    if (!file_.is_open()) {
-        THROW_RUNTIME_ERROR("Could not open file for reading data");
+    : metadata_(std::move(meta)) {
+    fd_ = open(file_name.c_str(), O_RDONLY);
+    if (fd_ < 0) {
+        THROW_RUNTIME_ERROR("Could not open file for reading data: " + file_name);
+    }
+}
+
+ColumnarReader::~ColumnarReader() {
+    if (fd_ >= 0) {
+        close(fd_);
     }
 }
 
@@ -111,8 +121,10 @@ void ColumnarReader::ReadRawColumnData(size_t column_index, size_t chunk_index,
     uint64_t size = meta.sizes[chunk_index];
 
     buffer.resize(size);
-    file_.seekg(offset, std::ios::beg);
-    file_.read(buffer.data(), size);
+    ssize_t bytes_read = pread(fd_, buffer.data(), size, offset);
+    if (bytes_read != static_cast<ssize_t>(size)) {
+        THROW_RUNTIME_ERROR("Failed to read data");
+    }
 }
 
 std::shared_ptr<Column> ColumnarReader::GetColumnData(size_t column_index,

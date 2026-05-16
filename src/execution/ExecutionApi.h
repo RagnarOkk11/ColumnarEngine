@@ -4,6 +4,7 @@
 #include "execution/expressions/FilterExpressions.h"
 #include "execution/ExecutionLogic.h"
 #include "execution/ExecutionHelper.h"
+#include "execution/PipelineExecutor.h"
 
 #include <iostream>
 
@@ -45,7 +46,7 @@ public:
         }
     }
 
-    std::shared_ptr<Column> GetResult(std::string column_name) const {
+    std::shared_ptr<Column> GetResult(const std::string& column_name) const {
         const std::vector<Field>& fields = schema_.GetFields();
         for (size_t i = 0; i < fields.size(); ++i) {
             if (fields[i].name == column_name) {
@@ -115,22 +116,26 @@ public:
         return DataFrame(drop_node);
     }
 
-    DataFrame Reoder(std::vector<std::string> desired_order) {
+    DataFrame Reorder(std::vector<std::string> desired_order) {
         auto node = std::make_shared<ReorderNode>(logical_plan_, std::move(desired_order));
         return DataFrame(node);
     }
 
-    DataResult Collect() {
-        PhysicalOperatorContext context = logical_plan_->BuildPhysicalPlan();
+    DataResult Collect() const {
+        PipelineBuildContext ctx;
 
-        std::unique_ptr<Operator> physical_plan_root = std::move(context.root_operator);
-        std::vector<std::unique_ptr<RecordBatch>> result;
-        while (std::unique_ptr<RecordBatch> batch = physical_plan_root->Run()) {
-            if (batch != nullptr) {
-                result.push_back(std::move(batch));
-            }
+        auto outer_pipe = std::make_unique<Pipeline>();
+        auto result_sink = std::make_shared<ResultSinkOperator>();
+        outer_pipe->sink = result_sink;
+        ctx.current_pipeline = outer_pipe.get();
+
+        logical_plan_->BuildPipelines(ctx);
+        ctx.completed_pipelines.push_back(std::move(outer_pipe));
+        for (auto& pipeline : ctx.completed_pipelines) {
+            pipeline->Execute();
         }
-        return DataResult{std::move(result), std::move(context.schema)};
+
+        return DataResult{result_sink->TakeBatches(), std::move(ctx.schema)};
     }
 
 private:

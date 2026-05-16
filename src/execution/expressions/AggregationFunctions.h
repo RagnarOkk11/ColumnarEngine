@@ -11,9 +11,10 @@
 
 #include "column/ColumnFactory.h"
 
+#include "absl/container/flat_hash_set.h"
+
 #include <memory>
 #include <type_traits>
-#include <unordered_set>
 #include <vector>
 
 class AggregationFunction {
@@ -352,7 +353,7 @@ protected:
 
 private:
     size_t column_index_;
-    std::unordered_set<InputValueType> distinct_values_;
+    absl::flat_hash_set<InputValueType> distinct_values_;
 };
 
 template <typename InputColumn, typename OutputColumn>
@@ -390,5 +391,5 @@ protected:
 
 private:
     size_t column_index_;
-    std::vector<std::unordered_set<InputValueType>> distinct_values_;
+    std::vector<absl::flat_hash_set<InputValueType>> distinct_values_;
 };

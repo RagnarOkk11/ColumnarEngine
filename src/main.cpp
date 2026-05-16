@@ -2,7 +2,7 @@
 #include "execution/ExecutionApi.h"
 
 #include <chrono>
-#include <sys/stat.h>
+#include <experimental/simd>
 
 class Query {
 public:
@@ -427,7 +427,7 @@ public:
                       .Aggregate({"URL"}, {Count("*", "c")})
                       .OrderBy({{"c", true}}, 10)
                       .Project({Literal<int16_t>("const_1", 1)})
-                      .Reoder({"const_1", "URL", "c"})
+                      .Reorder({"const_1", "URL", "c"})
                       .Collect();
         df.Display();
     }
@@ -441,7 +441,7 @@ public:
                       .Project({AddConst<int32_t>("ClientIP", -1, "ClientIP_minus_1"),
                                 AddConst<int32_t>("ClientIP", -2, "ClientIP_minus_2"),
                                 AddConst<int32_t>("ClientIP", -3, "ClientIP_minus_3")})
-                      .Reoder({"ClientIP", "ClientIP_minus_1", "ClientIP_minus_2",
+                      .Reorder({"ClientIP", "ClientIP_minus_1", "ClientIP_minus_2",
                                "ClientIP_minus_3", "c"})
                       .Collect();
 

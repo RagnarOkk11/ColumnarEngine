@@ -7,7 +7,8 @@
 #include "column/NumericColumn.h"
 #include "types/String.h"
 
-#include <regex>
+#include <re2/re2.h>
+
 #include <memory>
 
 class ScalarFunction {
@@ -213,8 +214,8 @@ public:
         AggExpHelper::IterateColumnData<StringColumn>(
             batch, col_ind_, [&](const auto& value, size_t, size_t real_ind) {
                 std::string str(value);
-                temp_res[real_ind] =
-                    std::regex_replace(str, regex_, replacement_, std::regex_constants::format_sed);
+                re2::RE2::GlobalReplace(&str, regex_, replacement_);
+                temp_res[real_ind] = std::move(str);
             });
 
         StringColumnBuilder builder;
@@ -226,6 +227,6 @@ public:
 
 private:
     size_t col_ind_;
-    std::regex regex_;
+    re2::RE2 regex_;
     std::string replacement_;
 };

@@ -1,4 +1,10 @@
 add_library(project_includes INTERFACE)
+
+target_link_libraries(project_includes INTERFACE
+        absl::flat_hash_map
+        re2::re2
+)
+
 target_include_directories(project_includes INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/column
@@ -11,7 +17,9 @@ target_include_directories(project_includes INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/utils/test
 )
 
-add_executable(columnar-engine
+find_package(Threads REQUIRED)
+
+set(ENGINE_SOURCES
         main.cpp
         io/CsvTokenizer.cpp
         io/CsvTokenizer.h
@@ -53,10 +61,21 @@ add_executable(columnar-engine
         types/String.h
         column/ColumnView.h
         types/TimeUnit.h
+        utils/Concurrency.h
+        execution/Pipeline.h
+        execution/PipelineExecutor.h
 )
 
+add_executable(columnar-engine ${ENGINE_SOURCES}
+        utils/ThreadPool.h)
 target_link_libraries(columnar-engine PRIVATE project_includes)
 target_compile_options(columnar-engine PRIVATE -Werror)
+
+add_executable(columnar-engine-mt ${ENGINE_SOURCES})
+target_link_libraries(columnar-engine-mt PRIVATE project_includes Threads::Threads)
+# ENABLE_MULTITHREADING, it will enable std::atomic and std::mutex
+target_compile_definitions(columnar-engine-mt PRIVATE ENABLE_MULTITHREADING)
+target_compile_options(columnar-engine-mt PRIVATE -Werror)
 
 add_executable(test_csv_parser
         io/test/TestCsvParser.cpp

@@ -13,13 +13,16 @@ echo ">>> Запуск build.sh..."
 echo ">>> Запуск convert.sh..."
 ./convert.sh ../hits_sample.csv ../columnar_hits_sample.tuff ../hits.schema
 
-echo ">>> Запуск запросов от 0 до 42..."
+RESULTS_DIR="query_results"
+mkdir -p "${RESULTS_DIR}"
+
+echo ">>> Запуск запросов от 0 до 42 (результаты в ${RESULTS_DIR}/)..."
 for i in {0..42}
 do
     echo "========================================="
     echo ">>> Выполнение запроса $i"
     echo "========================================="
-    ./run_query.sh "$i" ../columnar_hits_sample.tuff test.csv test.log
+    ./run_query.sh "$i" ../columnar_hits_sample.tuff "${RESULTS_DIR}/query_${i}.csv" "${RESULTS_DIR}/query_${i}.log"
 done
 
-echo ">>> Все запросы выполнены успешно."
+echo ">>> Все запросы выполнены успешно. Результаты в ${RESULTS_DIR}/"

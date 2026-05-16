@@ -7,6 +7,8 @@
 
 #include <numeric>
 
+// ========================= ScanOperator =========================
+
 ScanOperator::ScanOperator(const std::string& table_path,
                            const std::vector<std::string>& column_names,
                            std::shared_ptr<const MetadataTable> metadata)
@@ -32,18 +34,19 @@ ScanOperator::ScanOperator(const std::string& table_path,
     }
 }
 
-std::unique_ptr<RecordBatch> ScanOperator::Run() {
+std::unique_ptr<RecordBatch> ScanOperator::GetData() {
     if (column_indices_.empty()) {
-        if (finished_empty_scan_) {
-            return nullptr;
+        bool expected = false;
+        if (finished_empty_scan_.compare_exchange_strong(expected, true)) {
+            auto record_batch = std::make_unique<RecordBatch>();
+            record_batch->num_rows = metadata_->GetNumRows();
+            return record_batch;
         }
-        auto record_batch = std::make_unique<RecordBatch>();
-        record_batch->num_rows = metadata_->GetNumRows();
-        finished_empty_scan_ = true;
-        return record_batch;
+        return nullptr;
     }
 
-    if (current_chunk_ >= total_chunks_) {
+    size_t cur_chunk = current_chunk_.fetch_add(1);
+    if (cur_chunk >= total_chunks_) {
         return nullptr;
     }
 
@@ -51,152 +54,218 @@ std::unique_ptr<RecordBatch> ScanOperator::Run() {
     record_batch->num_rows = 0;
 
     for (size_t col_idx : column_indices_) {
-        std::shared_ptr<Column> column_data = reader_.GetColumnData(col_idx, current_chunk_);
+        std::shared_ptr<Column> column_data = reader_.GetColumnData(col_idx, cur_chunk);
         if (record_batch->num_rows == 0) {
             record_batch->num_rows = column_data->Size();
         }
         record_batch->columns.push_back(std::move(column_data));
     }
 
-    ++current_chunk_;
     return record_batch;
 }
 
-AggregationOperator::AggregationOperator(
-    std::unique_ptr<Operator> child,
-    std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions)
-    : child_(std::move(child)), aggregation_functions_(std::move(aggregation_functions)) {
+// ========================= FilterTransformOperator =========================
+
+FilterTransformOperator::FilterTransformOperator(std::shared_ptr<FilterFunction> filter_function)
+    : filter_function_(std::move(filter_function)) {
 }
 
-std::unique_ptr<RecordBatch> AggregationOperator::Run() {
-    if (finished_) {
+std::unique_ptr<RecordBatch> FilterTransformOperator::Execute(std::unique_ptr<RecordBatch> batch) {
+    std::vector<size_t> selection_vector = filter_function_->Evaluate(*batch);
+    if (selection_vector.empty()) {
         return nullptr;
     }
-    while (std::unique_ptr<RecordBatch> batch = child_->Run()) {
-        for (std::unique_ptr<GlobalAggregationFunction>& aggregation_function :
-             aggregation_functions_) {
-            aggregation_function->Update(*batch);
-        }
-    }
-    auto result_batch = std::make_unique<RecordBatch>();
-    result_batch->num_rows = 1;
-
-    for (std::unique_ptr<GlobalAggregationFunction>& aggregation_function :
-         aggregation_functions_) {
-        result_batch->columns.push_back(aggregation_function->Finalize());
-    }
-
-    finished_ = true;
-    return result_batch;
+    batch->num_rows = selection_vector.size();
+    batch->selection_vector =
+        std::make_shared<const std::vector<size_t>>(std::move(selection_vector));
+    return batch;
 }
 
-FilterOperator::FilterOperator(std::unique_ptr<Operator> child,
-                               std::shared_ptr<FilterFunction> filter_function)
-    : child_(std::move(child)), filter_function_(std::move(filter_function)) {
+// ========================= ScalarTransformOperator =========================
+
+ScalarTransformOperator::ScalarTransformOperator(
+    std::vector<std::unique_ptr<ScalarFunction>> scalar_functions)
+    : scalar_functions_(std::move(scalar_functions)) {
 }
 
-std::unique_ptr<RecordBatch> FilterOperator::Run() {
-    while (std::unique_ptr<RecordBatch> batch = child_->Run()) {
-        std::vector<size_t> selection_vector = filter_function_->Evaluate(*batch);
-        if (selection_vector.empty()) {
-            continue;
+std::unique_ptr<RecordBatch> ScalarTransformOperator::Execute(std::unique_ptr<RecordBatch> batch) {
+    for (auto& func : scalar_functions_) {
+        batch->columns.push_back(func->Evaluate(*batch));
+    }
+    return batch;
+}
+
+// ========================= DropTransformOperator =========================
+
+DropTransformOperator::DropTransformOperator(std::vector<size_t> column_stay_indices)
+    : column_stay_indices_(std::move(column_stay_indices)) {
+}
+
+std::unique_ptr<RecordBatch> DropTransformOperator::Execute(std::unique_ptr<RecordBatch> batch) {
+    std::vector<std::shared_ptr<Column>> new_columns;
+    new_columns.reserve(column_stay_indices_.size());
+
+    for (size_t ind : column_stay_indices_) {
+        new_columns.push_back(std::move(batch->columns[ind]));
+    }
+
+    batch->columns = std::move(new_columns);
+    return batch;
+}
+
+// ========================= LimitTransformOperator =========================
+
+LimitTransformOperator::LimitTransformOperator(size_t limit) : limit_(limit) {
+}
+
+std::unique_ptr<RecordBatch> LimitTransformOperator::Execute(std::unique_ptr<RecordBatch> batch) {
+    if (cur_rows_ >= limit_) {
+        done_ = true;
+        return nullptr;
+    }
+
+    if (cur_rows_ + batch->num_rows <= limit_) {
+        cur_rows_ += batch->num_rows;
+        if (cur_rows_ == limit_) {
+            done_ = true;
         }
-        batch->num_rows = selection_vector.size();
-        batch->selection_vector =
-            std::make_shared<const std::vector<size_t>>(std::move(selection_vector));
+        return batch;
+    } else {
+        size_t remaining = limit_ - cur_rows_;
+        cur_rows_ = limit_;
+        done_ = true;
+        batch->num_rows = remaining;
+        if (batch->selection_vector) {
+            auto new_sel_vec = std::make_shared<std::vector<size_t>>(
+                batch->selection_vector->begin(), batch->selection_vector->begin() + remaining);
+            batch->selection_vector = std::move(new_sel_vec);
+        } else {
+            auto sel_vec = std::make_shared<std::vector<size_t>>(remaining);
+            std::iota(sel_vec->begin(), sel_vec->end(), 0);
+            batch->selection_vector = std::move(sel_vec);
+        }
         return batch;
     }
-    return nullptr;
 }
 
-GroupByOperator::GroupByOperator(std::unique_ptr<Operator> child,
-                                 std::vector<size_t> group_by_col_indices,
-                                 std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
-                                 std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs)
-    : child_(std::move(child)),
-      group_by_col_indices_(std::move(group_by_col_indices)),
+// ========================= AggregationSinkSourceOperator =========================
+
+AggregationSinkSourceOperator::AggregationSinkSourceOperator(
+    std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions)
+    : aggregation_functions_(std::move(aggregation_functions)) {
+}
+
+void AggregationSinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
+    for (auto& aggregation_function : aggregation_functions_) {
+        aggregation_function->Update(*batch);
+    }
+}
+
+void AggregationSinkSourceOperator::Finalize() {
+    result_batch_ = std::make_unique<RecordBatch>();
+    result_batch_->num_rows = 1;
+
+    for (auto& aggregation_function : aggregation_functions_) {
+        result_batch_->columns.push_back(aggregation_function->Finalize());
+    }
+}
+
+std::unique_ptr<RecordBatch> AggregationSinkSourceOperator::GetData() {
+    if (emitted_) {
+        return nullptr;
+    }
+    emitted_ = true;
+    return std::move(result_batch_);
+}
+
+// ========================= GroupBySinkSourceOperator =========================
+
+GroupBySinkSourceOperator::GroupBySinkSourceOperator(
+    std::vector<size_t> group_by_col_indices,
+    std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
+    std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs)
+    : group_by_col_indices_(std::move(group_by_col_indices)),
       key_builders_(std::move(key_builders)),
       agg_funcs_(std::move(agg_funcs)) {
 }
 
-std::unique_ptr<RecordBatch> GroupByOperator::Run() {
-    if (!accumulated_) {
-        while (auto batch = child_->Run()) {
-            std::vector<uint32_t> group_ids;
-            size_t batch_size = batch->num_rows;
-            group_ids.reserve(batch_size);
+void GroupBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
+    std::vector<uint32_t> group_ids;
+    size_t batch_size = batch->num_rows;
+    group_ids.reserve(batch_size);
 
-            const std::shared_ptr<const std::vector<size_t>>& sel_vec = batch->selection_vector;
-            std::vector<std::string> composite_keys(batch_size);
-            for (size_t col_idx : group_by_col_indices_) {
-                ExecutionHelper::HashKeys(*batch->columns[col_idx], composite_keys, sel_vec.get());
-            }
-
-            std::vector<size_t> new_group_indices;
-            size_t sz = num_groups_;
-
-            bool is_filtered = sel_vec != nullptr;
-            for (size_t i = 0; i < batch_size; ++i) {
-                const std::string& key = composite_keys[i];
-                auto it = hash_table_.find(key);
-                uint32_t gid;
-
-                if (it == hash_table_.end()) {
-                    gid = sz + new_group_indices.size();
-                    hash_table_[key] = gid;
-                    size_t actual_idx = is_filtered ? (*sel_vec)[i] : i;
-                    new_group_indices.push_back(actual_idx);
-                } else {
-                    gid = it->second;
-                }
-                group_ids.push_back(gid);
-            }
-
-            if (!new_group_indices.empty()) {
-                for (size_t k = 0; k < group_by_col_indices_.size(); ++k) {
-                    ExecutionHelper::CopySelection(*key_builders_[k],
-                                                   *batch->columns[group_by_col_indices_[k]],
-                                                   &new_group_indices);
-                }
-            }
-
-            num_groups_ = hash_table_.size();
-            for (auto& func : agg_funcs_) {
-                func->Resize(num_groups_);
-                func->Update(*batch, group_ids);
-            }
-        }
-        accumulated_ = true;
-
-        auto result_batch = std::make_unique<RecordBatch>();
-        result_batch->num_rows = num_groups_;
-
-        for (size_t k = 0; k < key_builders_.size(); ++k) {
-            result_batch->columns.push_back(key_builders_[k]->Finish());
-        }
-        for (size_t a = 0; a < agg_funcs_.size(); ++a) {
-            result_batch->columns.push_back(agg_funcs_[a]->Finalize());
-        }
-        return result_batch;
+    const std::shared_ptr<const std::vector<size_t>>& sel_vec = batch->selection_vector;
+    std::vector<std::string> composite_keys(batch_size);
+    for (size_t col_idx : group_by_col_indices_) {
+        ExecutionHelper::HashKeys(*batch->columns[col_idx], composite_keys, sel_vec.get());
     }
 
-    return nullptr;
+    std::vector<size_t> new_group_indices;
+    size_t sz = num_groups_;
+
+    bool is_filtered = sel_vec != nullptr;
+    for (size_t i = 0; i < batch_size; ++i) {
+        const std::string& key = composite_keys[i];
+        auto it = hash_table_.find(key);
+        uint32_t gid;
+
+        if (it == hash_table_.end()) {
+            gid = sz + new_group_indices.size();
+            hash_table_[key] = gid;
+            size_t actual_idx = is_filtered ? (*sel_vec)[i] : i;
+            new_group_indices.push_back(actual_idx);
+        } else {
+            gid = it->second;
+        }
+        group_ids.push_back(gid);
+    }
+
+    if (!new_group_indices.empty()) {
+        for (size_t k = 0; k < group_by_col_indices_.size(); ++k) {
+            ExecutionHelper::CopySelection(*key_builders_[k],
+                                           *batch->columns[group_by_col_indices_[k]],
+                                           &new_group_indices);
+        }
+    }
+
+    num_groups_ = hash_table_.size();
+    for (auto& func : agg_funcs_) {
+        func->Resize(num_groups_);
+        func->Update(*batch, group_ids);
+    }
 }
 
-OrderByOperator::OrderByOperator(std::unique_ptr<Operator> child,
-                                 std::vector<std::pair<size_t, bool>> sort_columns,
-                                 std::optional<size_t> limit, std::optional<size_t> offset)
-    : child_(std::move(child)),
-      sort_columns_(std::move(sort_columns)),
-      limit_(limit),
-      offset_(offset) {
+void GroupBySinkSourceOperator::Finalize() {
+    result_batch_ = std::make_unique<RecordBatch>();
+    result_batch_->num_rows = num_groups_;
+
+    for (size_t k = 0; k < key_builders_.size(); ++k) {
+        result_batch_->columns.push_back(key_builders_[k]->Finish());
+    }
+    for (size_t a = 0; a < agg_funcs_.size(); ++a) {
+        result_batch_->columns.push_back(agg_funcs_[a]->Finalize());
+    }
+}
+
+std::unique_ptr<RecordBatch> GroupBySinkSourceOperator::GetData() {
+    if (emitted_) {
+        return nullptr;
+    }
+    emitted_ = true;
+    return std::move(result_batch_);
+}
+
+// ========================= OrderBySinkSourceOperator =========================
+
+OrderBySinkSourceOperator::OrderBySinkSourceOperator(
+    std::vector<std::pair<size_t, bool>> sort_columns, std::optional<size_t> limit,
+    std::optional<size_t> offset)
+    : sort_columns_(std::move(sort_columns)), limit_(limit), offset_(offset) {
     total_limit_ = limit_;
     if (total_limit_.has_value()) {
         if (offset_.has_value()) {
             total_limit_.value() += offset_.value();
         }
-    } else {
-        total_limit_ = offset_;
     }
 }
 
@@ -221,50 +290,48 @@ int Compare(const void* raw_data, uint32_t a, uint32_t b) {
     return 0;
 }
 
-std::unique_ptr<RecordBatch> OrderByOperator::Run() {
-    if (accumulated_) {
-        return nullptr;
+void OrderBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
+    if (accum_builders_.empty()) {
+        for (size_t c = 0; c < batch->columns.size(); ++c) {
+            accum_builders_.push_back(
+                ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
+            accum_types_.push_back(batch->columns[c]->GetType());
+        }
+        accum_num_rows_ = 0;
     }
 
-    while (auto batch = child_->Run()) {
-        if (accum_builders_.empty()) {
-            for (size_t c = 0; c < batch->columns.size(); ++c) {
-                accum_builders_.push_back(
-                    ColumnFactory::MakeColumnBuilder(batch->columns[c]->GetType()));
-                accum_types_.push_back(batch->columns[c]->GetType());
-            }
-            accum_num_rows_ = 0;
-        }
-
-        const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
-        for (size_t c = 0; c < accum_builders_.size(); ++c) {
-            ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
-        }
-        accum_num_rows_ += batch->num_rows;
-
-        if (total_limit_.has_value() && accum_num_rows_ > total_limit_.value() * 10) {
-            TrimCurBatch(false);
-        }
+    const std::shared_ptr<const std::vector<size_t>>& sel = batch->selection_vector;
+    for (size_t c = 0; c < accum_builders_.size(); ++c) {
+        ExecutionHelper::CopySelection(*accum_builders_[c], *batch->columns[c], sel.get());
     }
+    accum_num_rows_ += batch->num_rows;
 
+    if (total_limit_.has_value() && accum_num_rows_ > total_limit_.value() * 10) {
+        TrimCurBatch(false);
+    }
+}
+
+void OrderBySinkSourceOperator::Finalize() {
     if (accum_num_rows_ > 0) {
         TrimCurBatch(true);
 
-        auto final_batch = std::make_unique<RecordBatch>();
-        final_batch->num_rows = accum_num_rows_;
+        result_batch_ = std::make_unique<RecordBatch>();
+        result_batch_->num_rows = accum_num_rows_;
         for (auto& builder : accum_builders_) {
-            final_batch->columns.push_back(builder->Finish());
+            result_batch_->columns.push_back(builder->Finish());
         }
-
-        accumulated_ = true;
-        return final_batch;
     }
-
-    accumulated_ = true;
-    return nullptr;
 }
 
-void OrderByOperator::TrimCurBatch(bool is_final) {
+std::unique_ptr<RecordBatch> OrderBySinkSourceOperator::GetData() {
+    if (emitted_) {
+        return nullptr;
+    }
+    emitted_ = true;
+    return std::move(result_batch_);
+}
+
+void OrderBySinkSourceOperator::TrimCurBatch(bool is_final) {
     if (accum_num_rows_ == 0) {
         return;
     }
@@ -333,77 +400,4 @@ void OrderByOperator::TrimCurBatch(bool is_final) {
         ExecutionHelper::CopySelection(*accum_builders_[c], *temp_batch->columns[c], &indices);
     }
     accum_num_rows_ = indices.size();
-}
-
-LimitOperator::LimitOperator(std::unique_ptr<Operator> child, size_t limit)
-    : child_(std::move(child)), limit_(limit) {
-}
-
-std::unique_ptr<RecordBatch> LimitOperator::Run() {
-    if (cur_rows_ >= limit_) {
-        return nullptr;
-    }
-    std::unique_ptr<RecordBatch> batch = child_->Run();
-    if (!batch) {
-        return nullptr;
-    }
-
-    if (cur_rows_ + batch->num_rows <= limit_) {
-        cur_rows_ += batch->num_rows;
-        return batch;
-    } else {
-        size_t remaining = limit_ - cur_rows_;
-        cur_rows_ += remaining;
-        batch->num_rows = remaining;
-        if (batch->selection_vector) {
-            auto new_sel_vec = std::make_shared<std::vector<size_t>>(
-                batch->selection_vector->begin(), batch->selection_vector->begin() + remaining);
-            batch->selection_vector = std::move(new_sel_vec);
-        } else {
-            auto sel_vec = std::make_shared<std::vector<size_t>>(remaining);
-            std::iota(sel_vec->begin(), sel_vec->end(), 0);
-            batch->selection_vector = std::move(sel_vec);
-        }
-
-        return batch;
-    }
-}
-
-ScalarOperator::ScalarOperator(std::unique_ptr<Operator> child,
-                               std::vector<std::unique_ptr<ScalarFunction>> scalar_functions)
-    : child_(std::move(child)), scalar_functions_(std::move(scalar_functions)) {
-}
-
-std::unique_ptr<RecordBatch> ScalarOperator::Run() {
-    auto batch = child_->Run();
-    if (!batch) {
-        return nullptr;
-    }
-
-    for (auto& func : scalar_functions_) {
-        batch->columns.push_back(func->Evaluate(*batch));
-    }
-
-    return batch;
-}
-
-DropOperator::DropOperator(std::unique_ptr<Operator> child, std::vector<size_t> column_stay_indices)
-    : child_(std::move(child)), column_stay_indices_(std::move(column_stay_indices)) {
-}
-
-std::unique_ptr<RecordBatch> DropOperator::Run() {
-    auto batch = child_->Run();
-    if (!batch) {
-        return nullptr;
-    }
-
-    std::vector<std::shared_ptr<Column>> new_columns;
-    new_columns.reserve(column_stay_indices_.size());
-
-    for (size_t ind : column_stay_indices_) {
-        new_columns.push_back(std::move(batch->columns[ind]));
-    }
-
-    batch->columns = std::move(new_columns);
-    return batch;
 }

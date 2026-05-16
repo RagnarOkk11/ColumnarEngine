@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.30)
 
 project(columnar-engine)
 
@@ -15,7 +15,26 @@ include(cmake/TestSolution.cmake)
 include(cmake/SeminarUtils.cmake)
 
 include(FetchContent)
-include(cmake/FindGlog.cmake)
+
+set(ABSL_PROPAGATE_CXX_STD ON)
+set(BUILD_TESTING OFF)
+set(ABSL_ENABLE_INSTALL ON)
+
+FetchContent_Declare(
+        abseil-cpp
+        GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+        GIT_TAG 20240116.2
+        SYSTEM
+)
+FetchContent_MakeAvailable(abseil-cpp)
+
+FetchContent_Declare(
+        re2
+        GIT_REPOSITORY https://github.com/google/re2.git
+        GIT_TAG 2024-02-01
+        SYSTEM
+)
+FetchContent_MakeAvailable(re2)
 
 find_package(Catch REQUIRED)
 find_package(Benchmark REQUIRED)
