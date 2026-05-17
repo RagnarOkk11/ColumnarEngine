@@ -3,10 +3,10 @@ set -e
 
 cd "$(dirname "$0")" || exit 1
 
-echo ">>> Running queries 0-42 one thread..."
+echo ">>> Running queries 0-42 multithreaded..."
 
 ITERATIONS=${1:-1}
-RESULTS_DIR="query_results"
+RESULTS_DIR="query_results_mt"
 mkdir -p "${RESULTS_DIR}"
 
 for (( iter=1; iter<=ITERATIONS; iter++ ))
@@ -18,10 +18,10 @@ do
     do
         echo -n ">>> Executing query $i ... "
         set +e
-        ./run_query.sh "$i" ../columnar_hits_sample.tuff "${RESULTS_DIR}/query_${i}_iter_${iter}.csv" "${RESULTS_DIR}/query_${i}_iter_${iter}.log"
+        ./run_query_mt.sh "$i" ../columnar_hits_sample.tuff "${RESULTS_DIR}/query_${i}_iter_${iter}.csv" "${RESULTS_DIR}/query_${i}_iter_${iter}.log"
         exit_code=$?
         set -e
-
+        
         if [ $exit_code -ne 0 ]; then
             echo "FAILED with exit code $exit_code"
             echo "See log: ${RESULTS_DIR}/query_${i}_iter_${iter}.log"

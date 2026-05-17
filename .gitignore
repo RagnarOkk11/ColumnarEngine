@@ -18,6 +18,7 @@ compile_commands.json
 .clangd
 test_csv
 test.csv
+test.log
 test_csv2
 test_main.cpp
 hits_sample.csv
