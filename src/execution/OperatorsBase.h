@@ -9,8 +9,6 @@
 
 #include <memory>
 #include <vector>
-#include <algorithm>
-#include <numeric>
 #include <optional>
 
 class GlobalAggregationFunction;
@@ -71,22 +69,9 @@ private:
 
 class ReorderTransformOperator : public TransformOperator {
 public:
-    ReorderTransformOperator(std::vector<size_t> new_indices)
-        : new_indices_(std::move(new_indices)) {
-    }
+    ReorderTransformOperator(std::vector<size_t> new_indices);
 
-    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override {
-        auto new_batch = std::make_unique<RecordBatch>();
-        new_batch->num_rows = batch->num_rows;
-        new_batch->selection_vector = batch->selection_vector;
-
-        new_batch->columns.reserve(new_indices_.size());
-        for (size_t ind : new_indices_) {
-            new_batch->columns.push_back(batch->columns[ind]);
-        }
-
-        return new_batch;
-    }
+    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
 
 private:
     std::vector<size_t> new_indices_;
@@ -99,31 +84,31 @@ public:
     std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
 
     bool IsPipelineDone() const override {
-        return done_;
+        return done_.load(std::memory_order_relaxed);
     }
 
 private:
     size_t limit_;
-    size_t cur_rows_ = 0;
-    bool done_ = false;
+    Atomic<size_t> cur_rows_{0};
+    Atomic<bool> done_{false};
 };
 
-// ========================= Pipeline Breakers (Sink + Source) =========================
+// ========================= Sink + Source Operators =========================
 
 class AggregationSinkSourceOperator : public SinkOperator, public SourceOperator {
 public:
     AggregationSinkSourceOperator(
         std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions);
 
-    void Sink(std::unique_ptr<RecordBatch> batch) override;
-    void Finalize() override;
+    void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
+    void Finalize() && override;
 
     std::unique_ptr<RecordBatch> GetData() override;
 
 private:
     std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions_;
     std::unique_ptr<RecordBatch> result_batch_;
-    bool emitted_ = false;
+    Atomic<bool> emitted_{false};
 };
 
 class GroupBySinkSourceOperator : public SinkOperator, public SourceOperator {
@@ -132,12 +117,14 @@ public:
                               std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
                               std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs);
 
-    void Sink(std::unique_ptr<RecordBatch> batch) override;
-    void Finalize() override;
+    void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
+    void Finalize() && override;
 
     std::unique_ptr<RecordBatch> GetData() override;
 
 private:
+    Mutex sink_mutex_;
+
     std::vector<size_t> group_by_col_indices_;
     std::vector<std::shared_ptr<ColumnBuilder>> key_builders_;
     std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs_;
@@ -145,7 +132,7 @@ private:
 
     absl::flat_hash_map<std::string, uint32_t> hash_table_;
     std::unique_ptr<RecordBatch> result_batch_;
-    bool emitted_ = false;
+    Atomic<bool> emitted_{false};
 };
 
 class OrderBySinkSourceOperator : public SinkOperator, public SourceOperator {
@@ -153,13 +140,15 @@ public:
     OrderBySinkSourceOperator(std::vector<std::pair<size_t, bool>> sort_columns,
                               std::optional<size_t> limit, std::optional<size_t> offset);
 
-    void Sink(std::unique_ptr<RecordBatch> batch) override;
-    void Finalize() override;
+    void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
+    void Finalize() && override;
 
     std::unique_ptr<RecordBatch> GetData() override;
 
 private:
     void TrimCurBatch(bool is_final);
+
+    Mutex sink_mutex_;
 
     std::vector<std::pair<size_t, bool>> sort_columns_;
     std::vector<std::shared_ptr<ColumnBuilder>> accum_builders_;
@@ -169,5 +158,5 @@ private:
     std::optional<size_t> offset_;
     std::optional<size_t> total_limit_;
     std::unique_ptr<RecordBatch> result_batch_;
-    bool emitted_ = false;
+    Atomic<bool> emitted_{false};
 };

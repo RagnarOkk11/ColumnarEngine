@@ -113,27 +113,47 @@ std::unique_ptr<RecordBatch> DropTransformOperator::Execute(std::unique_ptr<Reco
     return batch;
 }
 
+// ========================= ReorderTransformOperator =========================
+
+ReorderTransformOperator::ReorderTransformOperator(std::vector<size_t> new_indices)
+    : new_indices_(std::move(new_indices)) {
+}
+
+std::unique_ptr<RecordBatch> ReorderTransformOperator::Execute(std::unique_ptr<RecordBatch> batch) {
+    auto new_batch = std::make_unique<RecordBatch>();
+    new_batch->num_rows = batch->num_rows;
+    new_batch->selection_vector = batch->selection_vector;
+
+    new_batch->columns.reserve(new_indices_.size());
+    for (size_t ind : new_indices_) {
+        new_batch->columns.push_back(batch->columns[ind]);
+    }
+
+    return new_batch;
+}
+
 // ========================= LimitTransformOperator =========================
 
 LimitTransformOperator::LimitTransformOperator(size_t limit) : limit_(limit) {
 }
 
 std::unique_ptr<RecordBatch> LimitTransformOperator::Execute(std::unique_ptr<RecordBatch> batch) {
-    if (cur_rows_ >= limit_) {
-        done_ = true;
+    size_t old_rows = cur_rows_.fetch_add(batch->num_rows);
+
+    if (old_rows >= limit_) {
+        done_.store(true, std::memory_order_relaxed);
         return nullptr;
     }
 
-    if (cur_rows_ + batch->num_rows <= limit_) {
-        cur_rows_ += batch->num_rows;
-        if (cur_rows_ == limit_) {
-            done_ = true;
+    size_t remaining = limit_ - old_rows;
+
+    if (batch->num_rows <= remaining) {
+        if (old_rows + batch->num_rows >= limit_) {
+            done_.store(true, std::memory_order_relaxed);
         }
         return batch;
     } else {
-        size_t remaining = limit_ - cur_rows_;
-        cur_rows_ = limit_;
-        done_ = true;
+        done_.store(true, std::memory_order_relaxed);
         batch->num_rows = remaining;
         if (batch->selection_vector) {
             auto new_sel_vec = std::make_shared<std::vector<size_t>>(
@@ -155,13 +175,13 @@ AggregationSinkSourceOperator::AggregationSinkSourceOperator(
     : aggregation_functions_(std::move(aggregation_functions)) {
 }
 
-void AggregationSinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
+void AggregationSinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) {
     for (auto& aggregation_function : aggregation_functions_) {
-        aggregation_function->Update(*batch);
+        aggregation_function->Update(*batch, thread_id);
     }
 }
 
-void AggregationSinkSourceOperator::Finalize() {
+void AggregationSinkSourceOperator::Finalize() && {
     result_batch_ = std::make_unique<RecordBatch>();
     result_batch_->num_rows = 1;
 
@@ -171,11 +191,11 @@ void AggregationSinkSourceOperator::Finalize() {
 }
 
 std::unique_ptr<RecordBatch> AggregationSinkSourceOperator::GetData() {
-    if (emitted_) {
-        return nullptr;
+    bool expected = false;
+    if (emitted_.compare_exchange_strong(expected, true)) {
+        return std::move(result_batch_);
     }
-    emitted_ = true;
-    return std::move(result_batch_);
+    return nullptr;
 }
 
 // ========================= GroupBySinkSourceOperator =========================
@@ -189,7 +209,7 @@ GroupBySinkSourceOperator::GroupBySinkSourceOperator(
       agg_funcs_(std::move(agg_funcs)) {
 }
 
-void GroupBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
+void GroupBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) {
     std::vector<uint32_t> group_ids;
     size_t batch_size = batch->num_rows;
     group_ids.reserve(batch_size);
@@ -199,6 +219,8 @@ void GroupBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
     for (size_t col_idx : group_by_col_indices_) {
         ExecutionHelper::HashKeys(*batch->columns[col_idx], composite_keys, sel_vec.get());
     }
+
+    LockGuard<Mutex> lock(sink_mutex_);
 
     std::vector<size_t> new_group_indices;
     size_t sz = num_groups_;
@@ -222,20 +244,19 @@ void GroupBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
 
     if (!new_group_indices.empty()) {
         for (size_t k = 0; k < group_by_col_indices_.size(); ++k) {
-            ExecutionHelper::CopySelection(*key_builders_[k],
-                                           *batch->columns[group_by_col_indices_[k]],
-                                           &new_group_indices);
+            ExecutionHelper::CopySelection(
+                *key_builders_[k], *batch->columns[group_by_col_indices_[k]], &new_group_indices);
         }
     }
 
     num_groups_ = hash_table_.size();
     for (auto& func : agg_funcs_) {
         func->Resize(num_groups_);
-        func->Update(*batch, group_ids);
+        func->Update(*batch, group_ids, thread_id);
     }
 }
 
-void GroupBySinkSourceOperator::Finalize() {
+void GroupBySinkSourceOperator::Finalize() && {
     result_batch_ = std::make_unique<RecordBatch>();
     result_batch_->num_rows = num_groups_;
 
@@ -248,11 +269,11 @@ void GroupBySinkSourceOperator::Finalize() {
 }
 
 std::unique_ptr<RecordBatch> GroupBySinkSourceOperator::GetData() {
-    if (emitted_) {
-        return nullptr;
+    bool expected = false;
+    if (emitted_.compare_exchange_strong(expected, true)) {
+        return std::move(result_batch_);
     }
-    emitted_ = true;
-    return std::move(result_batch_);
+    return nullptr;
 }
 
 // ========================= OrderBySinkSourceOperator =========================
@@ -290,7 +311,9 @@ int Compare(const void* raw_data, uint32_t a, uint32_t b) {
     return 0;
 }
 
-void OrderBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
+void OrderBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch, size_t /* thread_id */) {
+    LockGuard<Mutex> lock(sink_mutex_);
+
     if (accum_builders_.empty()) {
         for (size_t c = 0; c < batch->columns.size(); ++c) {
             accum_builders_.push_back(
@@ -311,7 +334,7 @@ void OrderBySinkSourceOperator::Sink(std::unique_ptr<RecordBatch> batch) {
     }
 }
 
-void OrderBySinkSourceOperator::Finalize() {
+void OrderBySinkSourceOperator::Finalize() && {
     if (accum_num_rows_ > 0) {
         TrimCurBatch(true);
 
@@ -324,11 +347,11 @@ void OrderBySinkSourceOperator::Finalize() {
 }
 
 std::unique_ptr<RecordBatch> OrderBySinkSourceOperator::GetData() {
-    if (emitted_) {
-        return nullptr;
+    bool expected = false;
+    if (emitted_.compare_exchange_strong(expected, true)) {
+        return std::move(result_batch_);
     }
-    emitted_ = true;
-    return std::move(result_batch_);
+    return nullptr;
 }
 
 void OrderBySinkSourceOperator::TrimCurBatch(bool is_final) {

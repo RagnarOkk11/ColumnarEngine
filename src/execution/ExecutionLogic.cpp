@@ -81,7 +81,7 @@ void AggregateNode::BuildPipelines(PipelineBuildContext& ctx,
 
         std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs;
         for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
-            agg_funcs.push_back(expr->CreateGroupedAggregationFunction(ctx.schema, output_schema));
+            agg_funcs.push_back(expr->CreateGroupedAggregationFunction(ctx.schema, output_schema, ctx.num_threads));
         }
 
         auto breaker = std::make_shared<GroupBySinkSourceOperator>(
@@ -108,7 +108,7 @@ void AggregateNode::BuildPipelines(PipelineBuildContext& ctx,
         Schema output_schema;
         for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
             agg_functions.push_back(
-                expr->CreateGlobalAggregationFunction(ctx.schema, output_schema));
+                expr->CreateGlobalAggregationFunction(ctx.schema, output_schema, ctx.num_threads));
         }
 
         auto breaker = std::make_shared<AggregationSinkSourceOperator>(std::move(agg_functions));

@@ -3,14 +3,22 @@
 #ifdef ENABLE_MULTITHREADING
 
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 
 template <typename T>
 using Atomic = std::atomic<T>;
-
 using Mutex = std::mutex;
+using ConditionVariable = std::condition_variable;
+
+template <typename T>
+using LockGuard = std::lock_guard<T>;
+template <typename T>
+using UniqueLock = std::unique_lock<T>;
 
 #else
+
+#include "utils/Assert.h"
 
 template <typename T>
 class DummyAtomic {
@@ -68,9 +76,39 @@ public:
     }
 };
 
+class DummyConditionVariable {
+public:
+    template <typename Lock, typename Predicate>
+    void wait(Lock& /*lock*/, Predicate pred) {
+        ASSERT(pred());
+    }
+    void notify_one() {}
+    void notify_all() {}
+};
+
 template <typename T>
 using Atomic = DummyAtomic<T>;
 
 using Mutex = DummyMutex;
+
+using ConditionVariable = DummyConditionVariable;
+
+template <typename MutexT>
+class LockGuard {
+public:
+    explicit LockGuard(MutexT& /*m*/) {
+    }
+    LockGuard(const LockGuard&) = delete;
+    LockGuard& operator=(const LockGuard&) = delete;
+};
+
+template <typename MutexT>
+class UniqueLock {
+public:
+    explicit UniqueLock(MutexT& /*m*/) {
+    }
+    UniqueLock(const UniqueLock&) = delete;
+    UniqueLock& operator=(const UniqueLock&) = delete;
+};
 
 #endif
