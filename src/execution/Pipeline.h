@@ -46,10 +46,10 @@ public:
     std::shared_ptr<SinkOperator> sink;
 
     void Execute(ThreadPool& thread_pool, size_t num_threads) {
-        Atomic<size_t> num_tasks_finished{0};
+        size_t num_tasks_finished{0};
         Mutex wait_mutex;
         ConditionVariable wait_cond;
-        for (size_t thread_id = 0; thread_id < num_threads; thread_id++) {
+        for (size_t thread_id = 0; thread_id < num_threads; ++thread_id) {
             thread_pool.Enqueue(
                 [this, thread_id, &num_tasks_finished, &wait_mutex, &wait_cond, num_threads]() {
                     while (auto batch = source->GetData()) {
@@ -80,9 +80,8 @@ public:
                     }
                     {
                         UniqueLock<Mutex> lock(wait_mutex);
-                        size_t finished_before =
-                            num_tasks_finished.fetch_add(1, std::memory_order_release);
-                        if (finished_before + 1 == num_threads) {
+                        ++num_tasks_finished;
+                        if (num_tasks_finished == num_threads) {
                             wait_cond.notify_one();
                         }
                     }
@@ -92,7 +91,7 @@ public:
         {
             UniqueLock<Mutex> lock(wait_mutex);
             wait_cond.wait(lock, [&]() {
-                return num_tasks_finished.load(std::memory_order_acquire) == num_threads;
+                return num_tasks_finished == num_threads;
             });
         }
 

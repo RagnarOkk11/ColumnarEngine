@@ -123,20 +123,19 @@ public:
     }
 
     DataResult Collect(size_t threads = 0) const {
-        size_t num_threads = threads;
-        if (num_threads == 0) {
+        if (threads == 0) {
 #ifdef ENABLE_MULTITHREADING
-            num_threads = std::thread::hardware_concurrency();
-            if (num_threads == 0) {
-                num_threads = 2;
+            threads = std::thread::hardware_concurrency();
+            if (threads == 0) {
+                threads = 2;
             }
 #else
-            num_threads = 1;
+            threads = 1;
 #endif
         }
 
         PipelineBuildContext ctx;
-        ctx.num_threads = num_threads;
+        ctx.num_threads = threads;
 
         auto outer_pipe = std::make_unique<Pipeline>();
         auto result_sink = std::make_shared<ResultSinkOperator>();
@@ -146,9 +145,9 @@ public:
         logical_plan_->BuildPipelines(ctx);
         ctx.completed_pipelines.push_back(std::move(outer_pipe));
 
-        ThreadPool thread_pool(num_threads);
+        ThreadPool thread_pool(threads);
         for (auto& pipeline : ctx.completed_pipelines) {
-            pipeline->Execute(thread_pool, num_threads);
+            pipeline->Execute(thread_pool, threads);
         }
 
         return DataResult{result_sink->TakeBatches(), std::move(ctx.schema)};

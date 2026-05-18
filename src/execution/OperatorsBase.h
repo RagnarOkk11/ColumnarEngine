@@ -114,8 +114,9 @@ private:
 class GroupBySinkSourceOperator : public SinkOperator, public SourceOperator {
 public:
     GroupBySinkSourceOperator(std::vector<size_t> group_by_col_indices,
-                              std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
-                              std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs);
+                              std::vector<ColumnType> key_types,
+                              std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs,
+                              size_t num_threads);
 
     void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
     void Finalize() && override;
@@ -123,14 +124,17 @@ public:
     std::unique_ptr<RecordBatch> GetData() override;
 
 private:
-    Mutex sink_mutex_;
+    struct alignas(64) GroupByThreadState {
+        absl::flat_hash_map<std::string, uint32_t> hash_table;
+        std::vector<std::shared_ptr<ColumnBuilder>> key_builders;
+        size_t num_groups = 0;
+    };
 
     std::vector<size_t> group_by_col_indices_;
-    std::vector<std::shared_ptr<ColumnBuilder>> key_builders_;
+    std::vector<ColumnType> key_types_;
     std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs_;
-    size_t num_groups_ = 0;
 
-    absl::flat_hash_map<std::string, uint32_t> hash_table_;
+    std::vector<GroupByThreadState> thread_states_;
     std::unique_ptr<RecordBatch> result_batch_;
     Atomic<bool> emitted_{false};
 };
@@ -138,7 +142,8 @@ private:
 class OrderBySinkSourceOperator : public SinkOperator, public SourceOperator {
 public:
     OrderBySinkSourceOperator(std::vector<std::pair<size_t, bool>> sort_columns,
-                              std::optional<size_t> limit, std::optional<size_t> offset);
+                              std::vector<ColumnType> column_types, std::optional<size_t> limit,
+                              std::optional<size_t> offset, size_t num_threads);
 
     void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
     void Finalize() && override;
@@ -146,17 +151,20 @@ public:
     std::unique_ptr<RecordBatch> GetData() override;
 
 private:
-    void TrimCurBatch(bool is_final);
+    void TrimLocalBatch(size_t thread_id);
 
-    Mutex sink_mutex_;
+    struct alignas(64) OrderByThreadState {
+        std::vector<std::shared_ptr<ColumnBuilder>> column_builders;
+        size_t accum_num_rows = 0;
+    };
 
     std::vector<std::pair<size_t, bool>> sort_columns_;
-    std::vector<std::shared_ptr<ColumnBuilder>> accum_builders_;
-    std::vector<ColumnType> accum_types_;
-    size_t accum_num_rows_ = 0;
+    const std::vector<ColumnType> column_types_;
     std::optional<size_t> limit_;
     std::optional<size_t> offset_;
     std::optional<size_t> total_limit_;
+
+    std::vector<OrderByThreadState> thread_states_;
     std::unique_ptr<RecordBatch> result_batch_;
     Atomic<bool> emitted_{false};
 };

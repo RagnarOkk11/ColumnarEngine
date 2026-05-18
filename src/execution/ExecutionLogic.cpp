@@ -51,7 +51,7 @@ void ScanNode::BuildPipelines(PipelineBuildContext& ctx,
 void AggregateNode::BuildPipelines(PipelineBuildContext& ctx,
                                    std::optional<std::vector<std::string>>) const {
     Pipeline* outer_pipeline = ctx.current_pipeline;
-    Pipeline* inner_pipeline = new Pipeline();
+    Pipeline* inner_pipeline = new Pipeline();  // TODO: this is bad, should not use raw pointers
     ctx.current_pipeline = inner_pipeline;
 
     if (!group_by_columns.empty()) {
@@ -67,7 +67,7 @@ void AggregateNode::BuildPipelines(PipelineBuildContext& ctx,
         child->BuildPipelines(ctx, needed_columns);
 
         std::vector<size_t> group_col_indices;
-        std::vector<std::shared_ptr<ColumnBuilder>> key_builders;
+        std::vector<ColumnType> key_types;
         Schema output_schema;
 
         for (const std::string& col_name : group_by_columns) {
@@ -76,16 +76,18 @@ void AggregateNode::BuildPipelines(PipelineBuildContext& ctx,
 
             ColumnType col_type = ctx.schema.GetColumnTypeByName(col_name);
             output_schema.AddColumn(col_name, col_type);
-            key_builders.push_back(ColumnFactory::MakeColumnBuilder(col_type));
+            key_types.push_back(col_type);
         }
 
         std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs;
         for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
-            agg_funcs.push_back(expr->CreateGroupedAggregationFunction(ctx.schema, output_schema, ctx.num_threads));
+            agg_funcs.push_back(
+                expr->CreateGroupedAggregationFunction(ctx.schema, output_schema, ctx.num_threads));
         }
 
         auto breaker = std::make_shared<GroupBySinkSourceOperator>(
-            std::move(group_col_indices), std::move(key_builders), std::move(agg_funcs));
+            std::move(group_col_indices), std::move(key_types), std::move(agg_funcs),
+            ctx.num_threads);
 
         inner_pipeline->sink = breaker;
         ctx.completed_pipelines.push_back(std::unique_ptr<Pipeline>(inner_pipeline));
@@ -149,7 +151,7 @@ void FilterNode::BuildPipelines(PipelineBuildContext& ctx,
 void OrderByNode::BuildPipelines(PipelineBuildContext& ctx,
                                  std::optional<std::vector<std::string>> required_columns) const {
     Pipeline* outer_pipeline = ctx.current_pipeline;
-    Pipeline* inner_pipeline = new Pipeline();
+    Pipeline* inner_pipeline = new Pipeline();  // TODO: this is bad, should not use raw pointers
     ctx.current_pipeline = inner_pipeline;
 
     std::vector<std::string> needed_columns;
@@ -171,8 +173,14 @@ void OrderByNode::BuildPipelines(PipelineBuildContext& ctx,
         sort_columns.push_back({sort_col_idx, is_desc});
     }
 
-    auto breaker = std::make_shared<OrderBySinkSourceOperator>(std::move(sort_columns),
-                                                               std::move(limit), std::move(offset));
+    std::vector<ColumnType> accum_types;
+    for (const auto& field : ctx.schema.GetFields()) {
+        accum_types.push_back(field.type);
+    }
+
+    auto breaker = std::make_shared<OrderBySinkSourceOperator>(
+        std::move(sort_columns), std::move(accum_types), std::move(limit), std::move(offset),
+        ctx.num_threads);
 
     inner_pipeline->sink = breaker;
     ctx.completed_pipelines.push_back(std::unique_ptr<Pipeline>(inner_pipeline));
