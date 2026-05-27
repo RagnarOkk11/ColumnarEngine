@@ -73,7 +73,6 @@ target_compile_options(columnar-engine PRIVATE -Werror)
 
 add_executable(columnar-engine-mt ${ENGINE_SOURCES})
 target_link_libraries(columnar-engine-mt PRIVATE project_includes Threads::Threads)
-# ENABLE_MULTITHREADING, it will enable std::atomic and std::mutex
 target_compile_definitions(columnar-engine-mt PRIVATE ENABLE_MULTITHREADING)
 target_compile_options(columnar-engine-mt PRIVATE -Werror)
 

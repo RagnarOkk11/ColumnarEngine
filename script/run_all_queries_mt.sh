@@ -23,11 +23,13 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
-echo ">>> Running queries 0-42 (multithreaded)..."
+echo ">>> Running queries 0-42 (single thread)..."
 echo ">>> Iterations: $ITERATIONS | Show Debug: $SHOW_DEBUG | Show Answers: $SHOW_ANSWERS"
 
-RESULTS_DIR="query_results_mt"
-mkdir -p "${RESULTS_DIR}"
+RESULTS_DIR="query_mt_results"
+if [ "$SHOW_ANSWERS" -eq 1 ] || [ "$SHOW_DEBUG" -eq 1 ]; then
+    mkdir -p "${RESULTS_DIR}"
+fi
 
 for (( iter=1; iter<=ITERATIONS; iter++ ))
 do
@@ -38,35 +40,56 @@ do
     do
         echo -n ">>> Executing query $i ... "
 
-        CSV_FILE="${RESULTS_DIR}/query_${i}_iter_${iter}.csv"
-        LOG_FILE="${RESULTS_DIR}/query_${i}_iter_${iter}.log"
+        # Куда пишем ответы
+        if [ "$SHOW_ANSWERS" -eq 1 ]; then
+            CSV_FILE="${RESULTS_DIR}/query_${i}_iter_${iter}.csv"
+        else
+            CSV_FILE="/dev/null"
+        fi
+
+        # Куда пишем логи (чтобы вытащить время)
+        if [ "$SHOW_DEBUG" -eq 1 ]; then
+            LOG_FILE="${RESULTS_DIR}/query_${i}_iter_${iter}.log"
+        else
+            LOG_FILE=$(mktemp) # Временный файл, который мы потом удалим
+        fi
 
         set +e
         ./run_query_mt.sh "$i" ../columnar_hits_sample.tuff "$CSV_FILE" "$LOG_FILE"
         exit_code=$?
         set -e
 
+        # Вытаскиваем время из лога (формат: "Query 0 completed in 2.57227 ms")
+        EXEC_TIME=$(grep "completed in" "$LOG_FILE" | awk '{print $5, $6}' || true)
+
         if [ $exit_code -ne 0 ]; then
             echo "FAILED with exit code $exit_code"
-            echo "See log: $LOG_FILE"
             echo "--- CRASH LOG ---"
-            cat "$LOG_FILE" # При падении всегда выводим лог, чтобы сразу видеть ошибку
+            cat "$LOG_FILE"
+            if [ "$SHOW_DEBUG" -eq 0 ]; then rm -f "$LOG_FILE"; fi
             exit $exit_code
         fi
-        echo "OK"
 
-        # Если запрошен вывод ответов
+        # Красиво выводим время
+        if [ -n "$EXEC_TIME" ]; then
+            echo "${EXEC_TIME} ... OK"
+        else
+            echo "OK"
+        fi
+
         if [ "$SHOW_ANSWERS" -eq 1 ]; then
             echo "------ ANSWERS (Query $i) ------"
             cat "$CSV_FILE"
             echo "--------------------------------"
         fi
 
-        # Если запрошен вывод дебаг информации (времени выполнения и т.д.)
         if [ "$SHOW_DEBUG" -eq 1 ]; then
             echo "------- DEBUG (Query $i) -------"
             cat "$LOG_FILE"
             echo "--------------------------------"
+        else
+            # Удаляем мусор, если дебаг не нужен
+            rm -f "$LOG_FILE"
         fi
     done
 done

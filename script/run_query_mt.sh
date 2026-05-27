@@ -17,7 +17,7 @@ BUILD_DIR="${ROOT_DIR}/cmake-build-release"
 BIN="${BUILD_DIR}/columnar-engine-mt"
 
 if [[ ! -x "${BIN}" ]]; then
-    echo "ERROR: columnar-engine-mt not found at ${BIN}" >&2
+    echo "ERROR: columnar-engine not found at ${BIN}" >&2
     echo "Run script/build.sh first" >&2
     exit 1
 fi
@@ -27,8 +27,13 @@ if [[ ! -f "${COLUMNAR}" ]]; then
     exit 2
 fi
 
-mkdir -p "$(dirname "${OUTPUT_CSV}")"
-mkdir -p "$(dirname "${LOG_FILE}")"
+# Создаем директории, только если это реальные файлы, а не /dev/null
+if [[ "${OUTPUT_CSV}" != "/dev/null" ]]; then
+    mkdir -p "$(dirname "${OUTPUT_CSV}")"
+fi
+if [[ "${LOG_FILE}" != "/dev/null" ]]; then
+    mkdir -p "$(dirname "${LOG_FILE}")"
+fi
 
-# Run the query, capture stdout (CSV result) and tee stderr+stdout to log
-"${BIN}" query "${COLUMNAR}" "${QUERY_NUM}" > "${OUTPUT_CSV}" 2> >(tee "${LOG_FILE}" >&2)
+# Run the query, capture stdout to CSV and stderr to log
+"${BIN}" query "${COLUMNAR}" "${QUERY_NUM}" > "${OUTPUT_CSV}" 2> "${LOG_FILE}"

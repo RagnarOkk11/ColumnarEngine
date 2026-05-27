@@ -46,7 +46,7 @@ public:
     std::shared_ptr<SinkOperator> sink;
 
     void Execute(ThreadPool& thread_pool, size_t num_threads) {
-        size_t num_tasks_finished{0};
+        size_t num_tasks_finished = 0;
         Mutex wait_mutex;
         ConditionVariable wait_cond;
         for (size_t thread_id = 0; thread_id < num_threads; ++thread_id) {

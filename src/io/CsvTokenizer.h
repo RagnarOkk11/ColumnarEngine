@@ -11,15 +11,14 @@ public:
     CsvTokenizer(const CsvTokenizer& other) = delete;
     CsvTokenizer& operator=(const CsvTokenizer& other) = delete;
 
-    void GetNextRow(VectorOfStrings2D& vector_of_strings);
+    void GetNextRow(VectorOfStrings2D& rows);
     bool IsEndOfLine() const;
     bool IsEOF() const;
     void ResetLineFlag();
 
 private:
-    static constexpr size_t kBufferSize = 1 << 20;
+    static constexpr size_t kBufferSize = 1 << 27;
 
-    bool is_special_[256] = {false};
     bool is_whitespace_[256] = {false};
     std::ifstream file_;
     std::vector<char> buffer_;
@@ -28,6 +27,7 @@ private:
     char delim_;
     bool end_of_line_ = false;
     bool eof_reached_ = false;
+
     bool GetChar(char& ch) {
         if (buffer_pos_ >= buffer_end_) [[unlikely]] {
             return RefillBuffer(ch);

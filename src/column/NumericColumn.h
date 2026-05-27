@@ -158,7 +158,9 @@ public:
 
     void AddBatch(const VectorOfStrings2D& batch, size_t j) override {
         size_t h = batch.Height();
-        data_.reserve(data_.size() + h);
+        if (data_.size() < h) {
+            data_.reserve(data_.size() + h);
+        }
         for (size_t i = 0; i < h; ++i) {
             data_.push_back(ColumnTypeTraits<T>::FromString(batch.GetString2D(i, j)));
         }
