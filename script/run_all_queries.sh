@@ -26,7 +26,7 @@ done
 echo ">>> Running queries 0-42 (single thread)..."
 echo ">>> Iterations: $ITERATIONS | Show Debug: $SHOW_DEBUG | Show Answers: $SHOW_ANSWERS"
 
-RESULTS_DIR="query_results"
+RESULTS_DIR="query_mt_results"
 if [ "$SHOW_ANSWERS" -eq 1 ] || [ "$SHOW_DEBUG" -eq 1 ]; then
     mkdir -p "${RESULTS_DIR}"
 fi
@@ -55,7 +55,7 @@ do
         fi
 
         set +e
-        ./run_query.sh "$i" ../columnar_hits_sample.tuff "$CSV_FILE" "$LOG_FILE"
+        ./run_query_mt.sh "$i" ../columnar_hits_sample.tuff "$CSV_FILE" "$LOG_FILE"
         exit_code=$?
         set -e
 
