@@ -23,13 +23,15 @@ public:
         return schema_;
     }
 
-    void Display() const {
+    void Display(bool display_names = false) const {
         const std::vector<Field>& fields = schema_.GetFields();
-        if (!fields.empty()) {
-            for (const Field& field : fields) {
-                std::cout << field.name << ",";
+        if (display_names) {
+            if (!fields.empty()) {
+                for (const Field& field : fields) {
+                    std::cout << field.name << ",";
+                }
+                std::cout << "\n";
             }
-            std::cout << "\n";
         }
 
         for (const std::unique_ptr<RecordBatch>& batch : batches_) {
