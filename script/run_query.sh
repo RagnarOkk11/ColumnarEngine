@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ $# -lt 4 ]]; then
-    echo "Usage: script/run_query.sh <query_num> <columnar> <output_csv> <log_file>" >&2
+    echo "Usage: script/run_query.sh <query_num> <columnar> <output_csv> <log_file> [--cold]" >&2
     exit 2
 fi
 
@@ -12,6 +12,7 @@ QUERY_NUM="$1"
 COLUMNAR="$2"
 OUTPUT_CSV="$3"
 LOG_FILE="$4"
+DROP_CACHE="${5:-}"
 
 BUILD_DIR="${ROOT_DIR}/cmake-build-release"
 BIN="${BUILD_DIR}/columnar-engine"
@@ -33,6 +34,12 @@ if [[ "${OUTPUT_CSV}" != "/dev/null" ]]; then
 fi
 if [[ "${LOG_FILE}" != "/dev/null" ]]; then
     mkdir -p "$(dirname "${LOG_FILE}")"
+fi
+
+# Очищаем кэш ОС для холодного запуска
+if [[ "${DROP_CACHE}" == "--cold" ]]; then
+    sync
+    sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
 fi
 
 # Run the query, capture stdout to CSV and stderr to log
