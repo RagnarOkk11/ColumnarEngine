@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ $# -lt 4 ]]; then
-    echo "Usage: script/run_query.sh <query_num> <columnar> <output_csv> <log_file> [--cold]" >&2
+    echo "Usage: script/run_query_mt.sh <query_num> <columnar> <output_csv> <log_file> [--cold]" >&2
     exit 2
 fi
 
@@ -15,7 +15,7 @@ LOG_FILE="$4"
 DROP_CACHE="${5:-}"
 
 BUILD_DIR="${ROOT_DIR}/cmake-build-release"
-BIN="${BUILD_DIR}/columnar-engine"
+BIN="${BUILD_DIR}/columnar-engine-mt"
 
 if [[ ! -x "${BIN}" ]]; then
     echo "ERROR: columnar-engine not found at ${BIN}" >&2

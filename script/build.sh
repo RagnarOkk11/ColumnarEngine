@@ -12,4 +12,4 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_CXX_STANDARD=23
 
-cmake --build "${BUILD_DIR}" --target columnar-engine -j "$(nproc)"
+cmake --build "${BUILD_DIR}" -j "$(nproc)"

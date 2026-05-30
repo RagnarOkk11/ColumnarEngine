@@ -73,10 +73,10 @@ public:
     }
 
     virtual std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) = 0;
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) = 0;
 
     virtual std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) = 0;
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) = 0;
 
 protected:
     std::string column_name_;
@@ -90,15 +90,15 @@ public:
     }
 
     std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        [[maybe_unused]] const Schema& child_schema, Schema& output_schema) override {
+        const Schema&, Schema& output_schema, size_t num_threads) override {
         output_schema.AddColumn(GetOutputName(), ColumnType::INT64);
-        return std::make_unique<CountGlobalAggregationFunction<Int64Column>>(ColumnType::INT64);
+        return std::make_unique<CountGlobalAggregationFunction<Int64Column>>(ColumnType::INT64, num_threads);
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        [[maybe_unused]] const Schema& child_schema, Schema& output_schema) override {
+        const Schema&, Schema& output_schema, size_t num_threads) override {
         output_schema.AddColumn(GetOutputName(), ColumnType::INT64);
-        return std::make_unique<CountGroupedAggregationFunction<Int64Column>>(ColumnType::INT64);
+        return std::make_unique<CountGroupedAggregationFunction<Int64Column>>(ColumnType::INT64, num_threads);
     }
 };
 
@@ -116,7 +116,7 @@ public:
     }
 
     std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -124,12 +124,12 @@ public:
             column_type, [&]<typename T>(ColumnType) -> std::unique_ptr<GlobalAggregationFunction> {
                 output_schema.AddColumn(GetOutputName(), ColumnType::INT64);
                 return std::make_unique<DistinctCountGlobalAggregationFunction<T, Int64Column>>(
-                    column_ind, ColumnType::INT64);
+                    column_ind, ColumnType::INT64, num_threads);
             });
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -138,7 +138,7 @@ public:
             [&]<typename T>(ColumnType) -> std::unique_ptr<GroupedAggregationFunction> {
                 output_schema.AddColumn(GetOutputName(), ColumnType::INT64);
                 return std::make_unique<DistinctCountGroupedAggregationFunction<T, Int64Column>>(
-                    column_ind, ColumnType::INT64);
+                    column_ind, ColumnType::INT64, num_threads);
             });
     }
 };
@@ -157,7 +157,7 @@ public:
     }
 
     std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -166,12 +166,12 @@ public:
             [&]<typename T>(ColumnType t) -> std::unique_ptr<GlobalAggregationFunction> {
                 output_schema.AddColumn(GetOutputName(), t);
                 return std::make_unique<TypedGlobalAggregationFunction<T, T, MinOperation>>(
-                    column_ind, t);
+                    column_ind, t, num_threads);
             });
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -180,7 +180,7 @@ public:
             [&]<typename T>(ColumnType t) -> std::unique_ptr<GroupedAggregationFunction> {
                 output_schema.AddColumn(GetOutputName(), t);
                 return std::make_unique<TypedGroupedAggregationFunction<T, T, MinOperation>>(
-                    column_ind, t);
+                    column_ind, t, num_threads);
             });
     }
 };
@@ -199,7 +199,7 @@ public:
     }
 
     std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -208,12 +208,12 @@ public:
             [&]<typename T>(ColumnType t) -> std::unique_ptr<GlobalAggregationFunction> {
                 output_schema.AddColumn(GetOutputName(), t);
                 return std::make_unique<TypedGlobalAggregationFunction<T, T, MaxOperation>>(
-                    column_ind, t);
+                    column_ind, t, num_threads);
             });
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -222,7 +222,7 @@ public:
             [&]<typename T>(ColumnType t) -> std::unique_ptr<GroupedAggregationFunction> {
                 output_schema.AddColumn(GetOutputName(), t);
                 return std::make_unique<TypedGroupedAggregationFunction<T, T, MaxOperation>>(
-                    column_ind, t);
+                    column_ind, t, num_threads);
             });
     }
 };
@@ -241,7 +241,7 @@ public:
     }
 
     std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -259,12 +259,12 @@ public:
                 output_schema.AddColumn(GetOutputName(), out_type);
                 return std::make_unique<
                     TypedGlobalAggregationFunction<InputColumn, OutputColumn, SumOperation>>(
-                    column_ind, out_type);
+                    column_ind, out_type, num_threads);
             });
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -282,7 +282,7 @@ public:
                 output_schema.AddColumn(GetOutputName(), out_type);
                 return std::make_unique<
                     TypedGroupedAggregationFunction<InputColumn, OutputColumn, SumOperation>>(
-                    column_ind, out_type);
+                    column_ind, out_type, num_threads);
             });
     }
 };
@@ -300,7 +300,7 @@ public:
     }
 
     std::unique_ptr<GlobalAggregationFunction> CreateGlobalAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -317,12 +317,12 @@ public:
                 output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
                 return std::make_unique<
                     AvgGlobalAggregationFunction<InputColumn, LongDoubleColumn, StateColumn>>(
-                    column_ind, ColumnType::LONGDOUBLE);
+                    column_ind, ColumnType::LONGDOUBLE, num_threads);
             });
     }
 
     std::unique_ptr<GroupedAggregationFunction> CreateGroupedAggregationFunction(
-        const Schema& child_schema, Schema& output_schema) override {
+        const Schema& child_schema, Schema& output_schema, size_t num_threads) override {
         const size_t column_ind = child_schema.GetColumnIndexByName(GetName());
         const ColumnType column_type = child_schema.GetColumnTypeByName(GetName());
 
@@ -339,7 +339,7 @@ public:
                 output_schema.AddColumn(GetOutputName(), ColumnType::LONGDOUBLE);
                 return std::make_unique<
                     AvgGroupedAggregationFunction<InputColumn, LongDoubleColumn, StateColumn>>(
-                    column_ind, ColumnType::LONGDOUBLE);
+                    column_ind, ColumnType::LONGDOUBLE, num_threads);
             });
     }
 };

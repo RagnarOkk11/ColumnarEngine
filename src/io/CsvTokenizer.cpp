@@ -5,9 +5,6 @@ CsvTokenizer::CsvTokenizer(const std::string& file_path, char delim)
     if (!file_.is_open()) {
         THROW_RUNTIME_ERROR("Could not open CSV file");
     }
-    is_special_[static_cast<unsigned char>(delim_)] = true;
-    is_special_[static_cast<unsigned char>('\n')] = true;
-    is_special_[static_cast<unsigned char>('"')] = true;
 
     is_whitespace_[static_cast<unsigned char>(' ')] = true;
     is_whitespace_[static_cast<unsigned char>('\t')] = true;
@@ -29,20 +26,19 @@ bool CsvTokenizer::RefillBuffer(char& ch) {
     return true;
 }
 
-void CsvTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
-    bool in_quotes = false;
+void CsvTokenizer::GetNextRow(VectorOfStrings2D& rows) {
     bool token_started = false;
-    bool token_materialized = false;
+    bool in_quotes = false;
 
     auto start_token_if_needed = [&]() {
-        if (!token_materialized) {
-            vector_of_strings.StartAddString();
-            token_materialized = true;
+        if (!token_started) {
+            rows.StartAddString();
+            token_started = true;
         }
     };
 
     while (true) {
-        if (buffer_pos_ >= buffer_end_) [[unlikely]] {
+        if (buffer_pos_ >= buffer_end_) {
             char tmp;
             if (!RefillBuffer(tmp)) {
                 break;
@@ -50,94 +46,71 @@ void CsvTokenizer::GetNextRow(VectorOfStrings2D& vector_of_strings) {
             --buffer_pos_;
         }
 
-        if (!in_quotes) {
-            if (!token_started) {
-                while (buffer_pos_ < buffer_end_ && (buffer_[buffer_pos_] == ' ' || buffer_[buffer_pos_] == '\t')) {
-                    ++buffer_pos_;
-                }
-            }
-
-            size_t start = buffer_pos_;
-            while (buffer_pos_ < buffer_end_) {
-                if (is_special_[static_cast<unsigned char>(buffer_[buffer_pos_])]) {
-                    break;
-                }
-                ++buffer_pos_;
-            }
-            if (buffer_pos_ > start) {
-                start_token_if_needed();
-                vector_of_strings.ContinueAddString(std::string_view(buffer_.data() + start, buffer_pos_ - start));
-                token_started = true;
-            }
-            if (buffer_pos_ >= buffer_end_) {
-                continue;
-            }
-        }
-
         char ch = buffer_[buffer_pos_++];
 
-        if (!token_started && (ch == ' ' || ch == '\t')) {
-            continue;
-        }
-
-        if (ch == '"' && !in_quotes && !token_started) {
-            start_token_if_needed();
-            in_quotes = true;
-            token_started = true;
-            continue;
-        }
-
-        if (ch == '"' && in_quotes) {
-            in_quotes = false;
-            while (GetChar(ch) && ch != delim_ && ch != '\n') {
-                if (!is_whitespace_[static_cast<unsigned char>(ch)]) {
-                    THROW_RUNTIME_ERROR(
-                        "Invalid CSV format: unexpected character after closing quote");
-                }
-            }
-            start_token_if_needed();
-            vector_of_strings.EndAddString();
-            token_started = false;
-            token_materialized = false;
-            if (ch == '\n' || eof_reached_) {
-                end_of_line_ = true;
-                return;
-            }
-            continue;
-        }
-
-        if (!in_quotes && (ch == delim_ || ch == '\n')) {
-            start_token_if_needed();
-            while (!vector_of_strings.EmptyLastString() &&
-                   is_whitespace_[static_cast<unsigned char>(vector_of_strings.BackLastString())]) {
-                vector_of_strings.PopLastChar();
-            }
-            vector_of_strings.EndAddString();
-            token_started = false;
-            token_materialized = false;
-            if (ch == '\n') {
-                end_of_line_ = true;
-                return;
-            }
+        if (!token_started && !in_quotes && is_whitespace_[static_cast<unsigned char>(ch)]) {
             continue;
         }
 
         start_token_if_needed();
-        vector_of_strings.ContinueAddString(ch);
-        token_started = true;
+        if (in_quotes) {
+            if (ch == '"') {
+                bool is_escaped_quote = false;
+                if (buffer_pos_ < buffer_end_) {
+                    if (buffer_[buffer_pos_] == '"') {
+                        is_escaped_quote = true;
+                    }
+                } else {
+                    char tmp;
+                    if (RefillBuffer(tmp)) {
+                        --buffer_pos_;
+                        if (buffer_[buffer_pos_] == '"') {
+                            is_escaped_quote = true;
+                        }
+                    }
+                }
+
+                if (is_escaped_quote) {
+                    rows.ContinueAddString('"');
+                    buffer_pos_++;
+                } else {
+                    in_quotes = false;
+                }
+            } else if (ch != '\r') {
+                rows.ContinueAddString(ch);
+            }
+        } else {
+            if (ch == '"') {
+                in_quotes = true;
+            } else if (ch == delim_ || ch == '\n') {
+                while (!rows.EmptyLastString() &&
+                       is_whitespace_[static_cast<unsigned char>(
+                           rows.BackLastString())]) {
+                    rows.PopLastChar();
+                }
+
+                rows.EndAddString();
+                token_started = false;
+
+                if (ch == '\n') {
+                    end_of_line_ = true;
+                    return;
+                }
+            } else if (ch != '\r') {
+                rows.ContinueAddString(ch);
+            }
+        }
     }
 
-    if (!token_materialized) {
-        end_of_line_ = true;
-        return;
-    }
-
-    while (!vector_of_strings.EmptyLastString() &&
-           is_whitespace_[static_cast<unsigned char>(vector_of_strings.BackLastString())]) {
-        vector_of_strings.PopLastChar();
+    if (token_started || !eof_reached_) {
+        start_token_if_needed();
+        while (!rows.EmptyLastString() &&
+               is_whitespace_[static_cast<unsigned char>(rows.BackLastString())]) {
+            rows.PopLastChar();
+        }
+        rows.EndAddString();
     }
     end_of_line_ = true;
-    vector_of_strings.EndAddString();
 }
 
 bool CsvTokenizer::IsEndOfLine() const {

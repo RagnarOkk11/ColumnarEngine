@@ -1,6 +1,7 @@
 #pragma once
 
 #include "execution/OperatorsBase.h"
+#include "execution/PipelineExecutor.h"
 #include "execution/expressions/AggregationExpressions.h"
 #include "execution/expressions/FilterExpressions.h"
 #include "execution/expressions/ScalarExpressions.h"
@@ -13,15 +14,11 @@
 #include <string>
 #include <vector>
 
-struct PhysicalOperatorContext {
-    std::unique_ptr<Operator> root_operator;
-    Schema schema;
-};
-
 struct PlanNode {
     virtual ~PlanNode() = default;
 
-    virtual PhysicalOperatorContext BuildPhysicalPlan(
+    virtual void BuildPipelines(
+        PipelineBuildContext& ctx,
         std::optional<std::vector<std::string>> required_columns = std::nullopt) const = 0;
 };
 
@@ -37,8 +34,8 @@ struct ScanNode : public PlanNode {
           table_meta(std::move(table_m)) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct AggregateNode : public PlanNode {
@@ -53,8 +50,8 @@ struct AggregateNode : public PlanNode {
           aggregate_expressions(std::move(agg_exprs)) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct FilterNode : public PlanNode {
@@ -65,8 +62,8 @@ struct FilterNode : public PlanNode {
         : child(std::move(c)), filter_expression(std::move(filter_expr)) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct OrderByNode : public PlanNode {
@@ -81,8 +78,8 @@ struct OrderByNode : public PlanNode {
         : child(std::move(c)), order_by_columns(std::move(order_by_cols)), limit(lim), offset(off) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct LimitNode : public PlanNode {
@@ -92,8 +89,8 @@ struct LimitNode : public PlanNode {
     LimitNode(std::shared_ptr<PlanNode> c, size_t lim) : child(std::move(c)), limit(lim) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct ScalarNode : public PlanNode {
@@ -105,8 +102,8 @@ struct ScalarNode : public PlanNode {
         : child(std::move(c)), scalar_expressions(std::move(scalar_exprs)) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct DropNode : public PlanNode {
@@ -117,8 +114,8 @@ struct DropNode : public PlanNode {
         : child(std::move(c)), columns_to_drop(std::move(cols_to_drop)) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };
 
 struct ReorderNode : public PlanNode {
@@ -129,6 +126,6 @@ struct ReorderNode : public PlanNode {
         : child(std::move(c)), desired_order(std::move(desired_ord)) {
     }
 
-    PhysicalOperatorContext BuildPhysicalPlan(
-        std::optional<std::vector<std::string>> required_columns) const override;
+    void BuildPipelines(PipelineBuildContext& ctx,
+                        std::optional<std::vector<std::string>> required_columns) const override;
 };

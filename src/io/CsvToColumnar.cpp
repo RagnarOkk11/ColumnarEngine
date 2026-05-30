@@ -14,26 +14,28 @@ void WriteToColumnar(const std::string& columnar_file_path, const VectorOfString
     ColumnarWriter writer(columnar_file_path);
     writer.WriteHeader(column_names, column_types);
 
-    static constexpr size_t kByteSize = 1 << 20;
+    static constexpr size_t kRowsPerChunk = 8192;
+    static constexpr size_t kBytePerCache = 1 << 20;
+
     bool end_flag = true;
     VectorOfStrings2D column_batch;
+    size_t accumulated_rows = 0;
 
     while (end_flag) {
-        size_t cur_batch_size = 0;
         column_batch.Clear();
+        size_t cache_rows = 0;
 
-        while (column_batch.ApproxByteSize() < kByteSize) {
-            bool has_row = reader.ReadRow(column_batch);
-            if (has_row) {
+        while (column_batch.ApproxByteSize() < kBytePerCache && accumulated_rows + cache_rows < kRowsPerChunk) {
+            if (reader.ReadRow(column_batch)) {
                 column_batch.StartNewLine();
-                ++cur_batch_size;
+                ++cache_rows;
             } else {
                 end_flag = false;
                 break;
             }
         }
 
-        if (cur_batch_size == 0) {
+        if (cache_rows == 0) {
             break;
         }
 
@@ -42,13 +44,17 @@ void WriteToColumnar(const std::string& columnar_file_path, const VectorOfString
             builders[j]->AddBatch(column_batch, j);
         }
 
-        std::vector<std::shared_ptr<Column>> columns;
-        for (auto& builder : builders) {
-            columns.push_back(builder->Finish());
-        }
+        accumulated_rows += cache_rows;
 
-        if (!columns.empty()) {
-            writer.WriteBatch(columns);
+        if (accumulated_rows >= kRowsPerChunk || !end_flag) {
+            std::vector<std::shared_ptr<Column>> columns;
+            for (auto& builder : builders) {
+                columns.push_back(builder->Finish());
+            }
+            if (!columns.empty() && columns[0]->Size() > 0) {
+                writer.WriteBatch(columns);
+            }
+            accumulated_rows = 0;
         }
     }
 

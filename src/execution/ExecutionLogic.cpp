@@ -1,7 +1,9 @@
 #include "execution/ExecutionLogic.h"
 
-PhysicalOperatorContext ScanNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
+// ========================= ScanNode =========================
+
+void ScanNode::BuildPipelines(PipelineBuildContext& ctx,
+                              std::optional<std::vector<std::string>> required_columns) const {
     const auto& full_columns = table_meta->GetColumns();
 
     std::vector<std::string> user_cols;
@@ -15,14 +17,16 @@ PhysicalOperatorContext ScanNode::BuildPhysicalPlan(
 
     std::vector<std::string> final_columns = user_cols;
     if (required_columns.has_value()) {
-        final_columns.insert(final_columns.end(), required_columns->begin(),
-                             required_columns->end());
-        std::sort(final_columns.begin(), final_columns.end());
-        final_columns.erase(std::unique(final_columns.begin(), final_columns.end()),
-                            final_columns.end());
+        for (const std::string& req_col : required_columns.value()) {
+            if (std::find(final_columns.begin(), final_columns.end(), req_col) ==
+                final_columns.end()) {
+                final_columns.push_back(req_col);
+            }
+        }
     }
 
-    auto op = std::make_unique<ScanOperator>(table_path, final_columns, table_meta);
+    auto scan_op = std::make_shared<ScanOperator>(table_path, final_columns, table_meta);
+    ctx.current_pipeline->source = scan_op;
 
     Schema output_schema;
     for (const std::string& name : final_columns) {
@@ -39,12 +43,19 @@ PhysicalOperatorContext ScanNode::BuildPhysicalPlan(
         }
     }
 
-    return {std::move(op), std::move(output_schema)};
+    ctx.schema = std::move(output_schema);
 }
 
-PhysicalOperatorContext AggregateNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>>) const {
+// ========================= AggregateNode =========================
+
+void AggregateNode::BuildPipelines(PipelineBuildContext& ctx,
+                                   std::optional<std::vector<std::string>>) const {
+    Pipeline* outer_pipeline = ctx.current_pipeline;
+    Pipeline* inner_pipeline = new Pipeline();  // TODO: this is bad, should not use raw pointers
+    ctx.current_pipeline = inner_pipeline;
+
     if (!group_by_columns.empty()) {
+        // === GROUP BY path ===
         std::vector<std::string> needed_columns = group_by_columns;
         for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
             expr->CollectRequiredColumns(needed_columns);
@@ -53,55 +64,69 @@ PhysicalOperatorContext AggregateNode::BuildPhysicalPlan(
         needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                              needed_columns.end());
 
-        PhysicalOperatorContext child_context = child->BuildPhysicalPlan(needed_columns);
+        child->BuildPipelines(ctx, needed_columns);
 
         std::vector<size_t> group_col_indices;
-        std::vector<std::shared_ptr<ColumnBuilder>> key_builders;
+        std::vector<ColumnType> key_types;
         Schema output_schema;
 
         for (const std::string& col_name : group_by_columns) {
-            size_t ind = child_context.schema.GetColumnIndexByName(col_name);
+            size_t ind = ctx.schema.GetColumnIndexByName(col_name);
             group_col_indices.push_back(ind);
 
-            ColumnType col_type = child_context.schema.GetColumnTypeByName(col_name);
+            ColumnType col_type = ctx.schema.GetColumnTypeByName(col_name);
             output_schema.AddColumn(col_name, col_type);
-            key_builders.push_back(ColumnFactory::MakeColumnBuilder(col_type));
+            key_types.push_back(col_type);
         }
 
         std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs;
         for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
             agg_funcs.push_back(
-                expr->CreateGroupedAggregationFunction(child_context.schema, output_schema));
+                expr->CreateGroupedAggregationFunction(ctx.schema, output_schema, ctx.num_threads));
         }
 
-        auto op = std::make_unique<GroupByOperator>(std::move(child_context.root_operator),
-                                                    std::move(group_col_indices),
-                                                    std::move(key_builders), std::move(agg_funcs));
-        return {std::move(op), std::move(output_schema)};
-    }
+        auto breaker = std::make_shared<GroupBySinkSourceOperator>(
+            std::move(group_col_indices), std::move(key_types), std::move(agg_funcs),
+            ctx.num_threads);
 
-    std::vector<std::string> needed_columns = group_by_columns;
-    for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
-        expr->CollectRequiredColumns(needed_columns);
-    }
-    std::sort(needed_columns.begin(), needed_columns.end());
-    needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
-                         needed_columns.end());
+        inner_pipeline->sink = breaker;
+        ctx.completed_pipelines.push_back(std::unique_ptr<Pipeline>(inner_pipeline));
+        outer_pipeline->source = breaker;
+        ctx.current_pipeline = outer_pipeline;
+        ctx.schema = std::move(output_schema);
+    } else {
+        // === Global aggregation path ===
+        std::vector<std::string> needed_columns;
+        for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
+            expr->CollectRequiredColumns(needed_columns);
+        }
+        std::sort(needed_columns.begin(), needed_columns.end());
+        needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
+                             needed_columns.end());
 
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(needed_columns);
-    std::vector<std::unique_ptr<GlobalAggregationFunction>> agg_functions;
-    Schema output_schema;
-    for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
-        agg_functions.push_back(
-            expr->CreateGlobalAggregationFunction(child_context.schema, output_schema));
+        child->BuildPipelines(ctx, needed_columns);
+
+        std::vector<std::unique_ptr<GlobalAggregationFunction>> agg_functions;
+        Schema output_schema;
+        for (const std::shared_ptr<AggregateExpression>& expr : aggregate_expressions) {
+            agg_functions.push_back(
+                expr->CreateGlobalAggregationFunction(ctx.schema, output_schema, ctx.num_threads));
+        }
+
+        auto breaker = std::make_shared<AggregationSinkSourceOperator>(std::move(agg_functions));
+
+        inner_pipeline->sink = breaker;
+        ctx.completed_pipelines.push_back(std::unique_ptr<Pipeline>(inner_pipeline));
+        outer_pipeline->source = breaker;
+        ctx.current_pipeline = outer_pipeline;
+        ctx.schema = std::move(output_schema);
     }
-    auto op = std::make_unique<AggregationOperator>(std::move(child_context.root_operator),
-                                                    std::move(agg_functions));
-    return {std::move(op), std::move(output_schema)};
 }
 
-PhysicalOperatorContext FilterNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
+// ========================= FilterNode =========================
+
+void FilterNode::BuildPipelines(PipelineBuildContext& ctx,
+                                std::optional<std::vector<std::string>> required_columns) const {
     std::vector<std::string> needed_columns;
     filter_expression->CollectRequiredColumns(needed_columns);
     if (required_columns.has_value()) {
@@ -113,16 +138,22 @@ PhysicalOperatorContext FilterNode::BuildPhysicalPlan(
     needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                          needed_columns.end());
 
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(needed_columns);
+    child->BuildPipelines(ctx, needed_columns);
+
     std::unique_ptr<FilterFunction> filter_function =
-        filter_expression->CreateFilterFunction(child_context.schema);
-    auto op = std::make_unique<FilterOperator>(std::move(child_context.root_operator),
-                                               std::move(filter_function));
-    return {std::move(op), std::move(child_context.schema)};
+        filter_expression->CreateFilterFunction(ctx.schema);
+    auto filter_op = std::make_shared<FilterTransformOperator>(std::move(filter_function));
+    ctx.current_pipeline->transforms.push_back(filter_op);
 }
 
-PhysicalOperatorContext OrderByNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
+// ========================= OrderByNode =========================
+
+void OrderByNode::BuildPipelines(PipelineBuildContext& ctx,
+                                 std::optional<std::vector<std::string>> required_columns) const {
+    Pipeline* outer_pipeline = ctx.current_pipeline;
+    Pipeline* inner_pipeline = new Pipeline();  // TODO: this is bad, should not use raw pointers
+    ctx.current_pipeline = inner_pipeline;
+
     std::vector<std::string> needed_columns;
     if (required_columns.has_value()) {
         needed_columns = required_columns.value();
@@ -134,28 +165,42 @@ PhysicalOperatorContext OrderByNode::BuildPhysicalPlan(
     needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                          needed_columns.end());
 
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(needed_columns);
+    child->BuildPipelines(ctx, needed_columns);
+
     std::vector<std::pair<size_t, bool>> sort_columns;
     for (const auto& [col_name, is_desc] : order_by_columns) {
-        size_t sort_col_idx = child_context.schema.GetColumnIndexByName(col_name);
+        size_t sort_col_idx = ctx.schema.GetColumnIndexByName(col_name);
         sort_columns.push_back({sort_col_idx, is_desc});
     }
 
-    auto op = std::make_unique<OrderByOperator>(std::move(child_context.root_operator),
-                                                std::move(sort_columns), std::move(limit),
-                                                std::move(offset));
-    return {std::move(op), std::move(child_context.schema)};
+    std::vector<ColumnType> accum_types;
+    for (const auto& field : ctx.schema.GetFields()) {
+        accum_types.push_back(field.type);
+    }
+
+    auto breaker = std::make_shared<OrderBySinkSourceOperator>(
+        std::move(sort_columns), std::move(accum_types), std::move(limit), std::move(offset),
+        ctx.num_threads);
+
+    inner_pipeline->sink = breaker;
+    ctx.completed_pipelines.push_back(std::unique_ptr<Pipeline>(inner_pipeline));
+    outer_pipeline->source = breaker;
+    ctx.current_pipeline = outer_pipeline;
 }
 
-PhysicalOperatorContext LimitNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(required_columns);
-    auto op = std::make_unique<LimitOperator>(std::move(child_context.root_operator), limit);
-    return {std::move(op), std::move(child_context.schema)};
+// ========================= LimitNode =========================
+
+void LimitNode::BuildPipelines(PipelineBuildContext& ctx,
+                               std::optional<std::vector<std::string>> required_columns) const {
+    child->BuildPipelines(ctx, required_columns);
+    auto limit_op = std::make_shared<LimitTransformOperator>(limit);
+    ctx.current_pipeline->transforms.push_back(limit_op);
 }
 
-PhysicalOperatorContext ScalarNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
+// ========================= ScalarNode =========================
+
+void ScalarNode::BuildPipelines(PipelineBuildContext& ctx,
+                                std::optional<std::vector<std::string>> required_columns) const {
     std::vector<std::string> needed_columns;
     if (required_columns.has_value()) {
         for (const auto& req_col : required_columns.value()) {
@@ -179,26 +224,24 @@ PhysicalOperatorContext ScalarNode::BuildPhysicalPlan(
     needed_columns.erase(std::unique(needed_columns.begin(), needed_columns.end()),
                          needed_columns.end());
 
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(needed_columns);
+    child->BuildPipelines(ctx, needed_columns);
 
     std::vector<std::unique_ptr<ScalarFunction>> scalar_functions;
-
     for (const auto& expr : scalar_expressions) {
-        scalar_functions.push_back(expr->CreateScalarFunction(child_context.schema));
+        scalar_functions.push_back(expr->CreateScalarFunction(ctx.schema));
     }
 
-    auto op = std::make_unique<ScalarOperator>(std::move(child_context.root_operator),
-                                               std::move(scalar_functions));
-    return {std::move(op), std::move(child_context.schema)};
+    auto scalar_op = std::make_shared<ScalarTransformOperator>(std::move(scalar_functions));
+    ctx.current_pipeline->transforms.push_back(scalar_op);
 }
 
-PhysicalOperatorContext DropNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(required_columns);
+// ========================= DropNode =========================
 
-    std::vector<size_t> cols_to_keep_indices;
-    Schema output_schema;
-    const auto& child_fields = child_context.schema.GetFields();
+void DropNode::BuildPipelines(PipelineBuildContext& ctx,
+                              std::optional<std::vector<std::string>> required_columns) const {
+    child->BuildPipelines(ctx, required_columns);
+
+    const auto& child_fields = ctx.schema.GetFields();
 
     for (const std::string& drop_col : columns_to_drop) {
         bool found = false;
@@ -213,6 +256,8 @@ PhysicalOperatorContext DropNode::BuildPhysicalPlan(
         }
     }
 
+    std::vector<size_t> cols_to_keep_indices;
+    Schema output_schema;
     for (size_t i = 0; i < child_fields.size(); ++i) {
         const auto& field = child_fields[i];
         if (std::find(columns_to_drop.begin(), columns_to_drop.end(), field.name) ==
@@ -222,18 +267,21 @@ PhysicalOperatorContext DropNode::BuildPhysicalPlan(
         }
     }
 
-    auto op = std::make_unique<DropOperator>(std::move(child_context.root_operator),
-                                             std::move(cols_to_keep_indices));
-    return {std::move(op), std::move(output_schema)};
+    auto drop_op = std::make_shared<DropTransformOperator>(std::move(cols_to_keep_indices));
+    ctx.current_pipeline->transforms.push_back(drop_op);
+    ctx.schema = std::move(output_schema);
 }
 
-PhysicalOperatorContext ReorderNode::BuildPhysicalPlan(
-    std::optional<std::vector<std::string>> required_columns) const {
-    PhysicalOperatorContext child_context = child->BuildPhysicalPlan(required_columns);
+// ========================= ReorderNode =========================
+
+void ReorderNode::BuildPipelines(PipelineBuildContext& ctx,
+                                 std::optional<std::vector<std::string>> required_columns) const {
+    child->BuildPipelines(ctx, required_columns);
+
+    const auto& child_fields = ctx.schema.GetFields();
 
     std::vector<size_t> new_indices;
     Schema output_schema;
-    const auto& child_fields = child_context.schema.GetFields();
 
     for (const std::string& reorder_col : desired_order) {
         bool found = false;
@@ -253,7 +301,7 @@ PhysicalOperatorContext ReorderNode::BuildPhysicalPlan(
         }
     }
 
-    auto op = std::make_unique<ReorderOperator>(std::move(child_context.root_operator),
-                                                std::move(new_indices));
-    return {std::move(op), std::move(output_schema)};
+    auto reorder_op = std::make_shared<ReorderTransformOperator>(std::move(new_indices));
+    ctx.current_pipeline->transforms.push_back(reorder_op);
+    ctx.schema = std::move(output_schema);
 }

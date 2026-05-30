@@ -74,7 +74,9 @@ public:
 
     void AddBatch(const VectorOfStrings2D& batch, size_t j) override {
         size_t h = batch.Height();
-        data_.reserve(data_.size() + h);
+        if (data_.size() < h) {
+            data_.reserve(data_.size() + h);
+        }
         for (size_t i = 0; i < h; ++i) {
             std::string_view cur = batch.GetString2D(i, j);
             data_.push_back(ParseStruct::Parse(cur));

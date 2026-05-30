@@ -3,10 +3,8 @@
 #include "types/ColumnType.h"
 #include "column/Column.h"
 
-#include <fstream>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 class MetadataTable {
@@ -38,6 +36,7 @@ private:
 class ColumnarReader {
 public:
     ColumnarReader(const std::string& file_name, std::shared_ptr<const MetadataTable> meta);
+    ~ColumnarReader();
 
     uint64_t GetNumRows() const {
         return metadata_->GetNumRows();
@@ -49,6 +48,6 @@ public:
     std::shared_ptr<Column> GetColumnData(size_t column_index, size_t chunk_index) const;
 
 private:
-    mutable std::ifstream file_;
+    int fd_ = -1;
     std::shared_ptr<const MetadataTable> metadata_;
 };

@@ -1,177 +1,170 @@
 #pragma once
 
+#include "execution/Pipeline.h"
 #include "io/ColumnarReader.h"
 #include "column/ColumnBuilder.h"
+#include "utils/Concurrency.h"
+
+#include "absl/container/flat_hash_map.h"
 
 #include <memory>
 #include <vector>
-#include <unordered_map>
-#include <algorithm>
+#include <optional>
 
 class GlobalAggregationFunction;
 class GroupedAggregationFunction;
 class FilterFunction;
 class ScalarFunction;
 
-struct RecordBatch {
-    size_t num_rows;
-    std::shared_ptr<const std::vector<size_t>> selection_vector;
-    std::vector<std::shared_ptr<Column>> columns;
-};
+// ========================= Source Operators =========================
 
-class Operator {
-public:
-    virtual ~Operator() = default;
-
-    virtual std::unique_ptr<RecordBatch> Run() = 0;
-};
-
-class ScanOperator : public Operator {
+class ScanOperator : public SourceOperator {
 public:
     ScanOperator(const std::string& table_path, const std::vector<std::string>& column_names,
                  std::shared_ptr<const MetadataTable> metadata);
 
-    std::unique_ptr<RecordBatch> Run() override;
+    std::unique_ptr<RecordBatch> GetData() override;
 
 private:
     ColumnarReader reader_;
     std::shared_ptr<const MetadataTable> metadata_;
     std::vector<size_t> column_indices_;
-    size_t current_chunk_ = 0;
+
+    Atomic<size_t> current_chunk_{0};
     size_t total_chunks_ = 0;
-    bool finished_empty_scan_ = false;
+    Atomic<bool> finished_empty_scan_{false};
 };
 
-class AggregationOperator : public Operator {
-public:
-    AggregationOperator(
-        std::unique_ptr<Operator> child,
-        std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions);
+// ========================= Transform Operators =========================
 
-    std::unique_ptr<RecordBatch> Run() override;
+class FilterTransformOperator : public TransformOperator {
+public:
+    FilterTransformOperator(std::shared_ptr<FilterFunction> filter_function);
+
+    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
 
 private:
-    std::unique_ptr<Operator> child_;
-    std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions_;
-    bool finished_ = false;
-};
-
-class FilterOperator : public Operator {
-public:
-    FilterOperator(std::unique_ptr<Operator> child,
-                   std::shared_ptr<FilterFunction> filter_function);
-
-    std::unique_ptr<RecordBatch> Run() override;
-
-private:
-    std::unique_ptr<Operator> child_;
     std::shared_ptr<FilterFunction> filter_function_;
 };
 
-class GroupByOperator : public Operator {
+class ScalarTransformOperator : public TransformOperator {
 public:
-    GroupByOperator(std::unique_ptr<Operator> child, std::vector<size_t> group_by_col_indices,
-                    std::vector<std::shared_ptr<ColumnBuilder>> key_builders,
-                    std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs);
+    ScalarTransformOperator(std::vector<std::unique_ptr<ScalarFunction>> scalar_functions);
 
-    std::unique_ptr<RecordBatch> Run() override;
+    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
 
 private:
-    std::unique_ptr<Operator> child_;
-    std::vector<size_t> group_by_col_indices_;
-    std::vector<std::shared_ptr<ColumnBuilder>> key_builders_;
-    std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs_;
-    bool accumulated_ = false;
-    size_t num_groups_ = 0;
-
-    std::unordered_map<std::string, uint32_t> hash_table_;
-};
-
-class OrderByOperator : public Operator {
-public:
-    OrderByOperator(std::unique_ptr<Operator> child,
-                    std::vector<std::pair<size_t, bool>> sort_columns, std::optional<size_t> limit,
-                    std::optional<size_t> offset);
-
-    std::unique_ptr<RecordBatch> Run() override;
-
-private:
-    void TrimCurBatch(bool is_final);
-
-    std::unique_ptr<Operator> child_;
-    std::vector<std::pair<size_t, bool>> sort_columns_;
-    std::unique_ptr<RecordBatch> accumulated_batch_;
-    std::vector<std::shared_ptr<ColumnBuilder>> accum_builders_;
-    std::vector<ColumnType> accum_types_;
-    size_t accum_num_rows_ = 0;
-    std::vector<size_t> indices_;
-    size_t current_idx_ = 0;
-    std::optional<size_t> limit_;
-    std::optional<size_t> offset_;
-    std::optional<size_t> total_limit_;
-    bool accumulated_ = false;
-};
-
-class LimitOperator : public Operator {
-public:
-    LimitOperator(std::unique_ptr<Operator> child, size_t limit);
-
-    std::unique_ptr<RecordBatch> Run() override;
-
-private:
-    std::unique_ptr<Operator> child_;
-    size_t limit_;
-    size_t cur_rows_ = 0;
-};
-
-class ScalarOperator : public Operator {
-public:
-    ScalarOperator(std::unique_ptr<Operator> child,
-                   std::vector<std::unique_ptr<ScalarFunction>> scalar_functions);
-
-    std::unique_ptr<RecordBatch> Run() override;
-
-private:
-    std::unique_ptr<Operator> child_;
     std::vector<std::unique_ptr<ScalarFunction>> scalar_functions_;
 };
 
-class DropOperator : public Operator {
+class DropTransformOperator : public TransformOperator {
 public:
-    DropOperator(std::unique_ptr<Operator> child, std::vector<size_t> column_stay_indices);
+    DropTransformOperator(std::vector<size_t> column_stay_indices);
 
-    std::unique_ptr<RecordBatch> Run() override;
+    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
 
 private:
-    std::unique_ptr<Operator> child_;
     std::vector<size_t> column_stay_indices_;
 };
 
-class ReorderOperator : public Operator {
+class ReorderTransformOperator : public TransformOperator {
 public:
-    ReorderOperator(std::unique_ptr<Operator> child, std::vector<size_t> new_indices)
-        : child_(std::move(child)), new_indices_(std::move(new_indices)) {
-    }
+    ReorderTransformOperator(std::vector<size_t> new_indices);
 
-    std::unique_ptr<RecordBatch> Run() override {
-        auto batch = child_->Run();
-        if (!batch) {
-            return nullptr;
-        }
+    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
 
-        auto new_batch = std::make_unique<RecordBatch>();
-        new_batch->num_rows = batch->num_rows;
-        new_batch->selection_vector = batch->selection_vector;
+private:
+    std::vector<size_t> new_indices_;
+};
 
-        new_batch->columns.reserve(new_indices_.size());
-        for (size_t ind : new_indices_) {
-            new_batch->columns.push_back(batch->columns[ind]);
-        }
+class LimitTransformOperator : public TransformOperator {
+public:
+    LimitTransformOperator(size_t limit);
 
-        return new_batch;
+    std::unique_ptr<RecordBatch> Execute(std::unique_ptr<RecordBatch> batch) override;
+
+    bool IsPipelineDone() const override {
+        return done_.load(std::memory_order_relaxed);
     }
 
 private:
-    std::unique_ptr<Operator> child_;
-    std::vector<size_t> new_indices_;
+    size_t limit_;
+    Atomic<size_t> cur_rows_{0};
+    Atomic<bool> done_{false};
+};
+
+// ========================= Sink + Source Operators =========================
+
+class AggregationSinkSourceOperator : public SinkOperator, public SourceOperator {
+public:
+    AggregationSinkSourceOperator(
+        std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions);
+
+    void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
+    void Finalize() && override;
+
+    std::unique_ptr<RecordBatch> GetData() override;
+
+private:
+    std::vector<std::unique_ptr<GlobalAggregationFunction>> aggregation_functions_;
+    std::unique_ptr<RecordBatch> result_batch_;
+    Atomic<bool> emitted_{false};
+};
+
+class GroupBySinkSourceOperator : public SinkOperator, public SourceOperator {
+public:
+    GroupBySinkSourceOperator(std::vector<size_t> group_by_col_indices,
+                              std::vector<ColumnType> key_types,
+                              std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs,
+                              size_t num_threads);
+
+    void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
+    void Finalize() && override;
+
+    std::unique_ptr<RecordBatch> GetData() override;
+
+private:
+    struct alignas(64) GroupByThreadState {
+        absl::flat_hash_map<std::string, uint32_t> hash_table;
+        std::vector<std::shared_ptr<ColumnBuilder>> key_builders;
+        size_t num_groups = 0;
+    };
+
+    std::vector<size_t> group_by_col_indices_;
+    std::vector<ColumnType> key_types_;
+    std::vector<std::unique_ptr<GroupedAggregationFunction>> agg_funcs_;
+
+    std::vector<GroupByThreadState> thread_states_;
+    std::unique_ptr<RecordBatch> result_batch_;
+    Atomic<bool> emitted_{false};
+};
+
+class OrderBySinkSourceOperator : public SinkOperator, public SourceOperator {
+public:
+    OrderBySinkSourceOperator(std::vector<std::pair<size_t, bool>> sort_columns,
+                              std::vector<ColumnType> column_types, std::optional<size_t> limit,
+                              std::optional<size_t> offset, size_t num_threads);
+
+    void Sink(std::unique_ptr<RecordBatch> batch, size_t thread_id) override;
+    void Finalize() && override;
+
+    std::unique_ptr<RecordBatch> GetData() override;
+
+private:
+    void TrimLocalBatch(size_t thread_id);
+
+    struct alignas(64) OrderByThreadState {
+        std::vector<std::shared_ptr<ColumnBuilder>> column_builders;
+        size_t accum_num_rows = 0;
+    };
+
+    std::vector<std::pair<size_t, bool>> sort_columns_;
+    const std::vector<ColumnType> column_types_;
+    std::optional<size_t> limit_;
+    std::optional<size_t> offset_;
+    std::optional<size_t> total_limit_;
+
+    std::vector<OrderByThreadState> thread_states_;
+    std::unique_ptr<RecordBatch> result_batch_;
+    Atomic<bool> emitted_{false};
 };
