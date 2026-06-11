@@ -1,7 +1,8 @@
-#include "CSVToColumnar.h"
-#include "ExecutionAPI.h"
+#include "io/CsvToColumnar.h"
+#include "execution/ExecutionApi.h"
 
 #include <chrono>
+#include <experimental/simd>
 
 class Query {
 public:
@@ -18,7 +19,7 @@ public:
     // SELECT COUNT(*) FROM hits WHERE AdvEngineID <> 0;
     void Query01() {
         auto df = DataFrame::Select(columnar_file_path_, {})
-                      .Filter(NotEq("AdvEngineID", 0))
+                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
                       .Aggregate({}, {Count()})
                       .Collect();
 
@@ -76,7 +77,7 @@ public:
     // COUNT(*) DESC;
     void Query07() {
         auto df = DataFrame::Select(columnar_file_path_, {"AdvEngineID"})
-                      .Filter(NotEq("AdvEngineID", 0))
+                      .Filter(NotEq<int16_t>("AdvEngineID", 0))
                       .Aggregate({"AdvEngineID"}, {Count()})
                       .OrderBy({{"count", true}})
                       .Collect();
@@ -189,11 +190,15 @@ public:
         df.Display();
     }
 
-    // TODO: 18
-
     // SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) FROM hits GROUP BY
     // UserID, m, SearchPhrase ORDER BY COUNT(*) DESC LIMIT 10;
     void Query18() {
+        auto df = DataFrame::Select(columnar_file_path_, {})
+                      .Project({ExtractMinute("EventTime", "m")})
+                      .Aggregate({"UserID", "m", "SearchPhrase"}, {Count()})
+                      .OrderBy({{"count", true}}, 10)
+                      .Collect();
+        df.Display();
     }
 
     // SELECT UserID FROM hits WHERE UserID = 435090932899640449;
@@ -204,7 +209,50 @@ public:
                       .Collect();
     }
 
-    // TODO: 20-23
+    // SELECT COUNT(*) FROM hits WHERE URL LIKE '%google%';
+    void Query20() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Filter(Like("URL", "%google%"))
+                      .Aggregate({}, {Count()})
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase, MIN(URL), COUNT(*) AS c FROM hits WHERE URL LIKE '%google%' AND
+    // SearchPhrase <> '' GROUP BY SearchPhrase ORDER BY c DESC LIMIT 10;
+    void Query21() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "URL"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Filter(Like("URL", "%google%"))
+                      .Aggregate({"SearchPhrase"}, {Min("URL"), Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT SearchPhrase, MIN(URL), MIN(Title), COUNT(*) AS c, COUNT(DISTINCT UserID) FROM hits
+    // WHERE Title LIKE '%Google%' AND URL NOT LIKE '%.google.%' AND SearchPhrase <> '' GROUP BY
+    // SearchPhrase ORDER BY c DESC LIMIT 10;
+    void Query22() {
+        auto df = DataFrame::Select(columnar_file_path_, {"SearchPhrase", "URL", "Title", "UserID"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Filter(Like("Title", "%Google%"))
+                      .Filter(NotLike("URL", "%.google.%"))
+                      .Aggregate({"SearchPhrase"}, {Min("URL"), Min("Title"), Count("*", "c"),
+                                                    DistinctCount("UserID")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT * FROM hits WHERE URL LIKE '%google%' ORDER BY EventTime LIMIT 10;
+    void Query23() {
+        auto df = DataFrame::Select(columnar_file_path_, {"*"})
+                      .Filter(Like("URL", "%google%"))
+                      .OrderBy({{"EventTime", false}}, 10)
+                      .Collect();
+        df.Display();
+    }
 
     // SELECT SearchPhrase FROM hits WHERE SearchPhrase <> '' ORDER BY EventTime LIMIT 10;
     void Query24() {
@@ -234,6 +282,306 @@ public:
         df.Display();
     }
 
+    // SELECT CounterID, AVG(length(URL)) AS l, COUNT(*) AS c FROM hits WHERE URL <> '' GROUP BY
+    // CounterID HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;
+    void Query27() {
+        auto df = DataFrame::Select(columnar_file_path_, {"CounterID", "URL"})
+                      .Filter(NotEq("URL", ""))
+                      .Project({Length("URL", "length_URL")})
+                      .Aggregate({"CounterID"}, {Avg("length_URL", "l"), Count("*", "c")})
+                      .Filter(Greater("c", static_cast<int64_t>(100000)))
+                      .OrderBy({{"l", true}}, 25)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\.)?([^/]+)/.*$', '\1') AS k,
+    // AVG(length(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer <> '' GROUP BY
+    // k HAVING COUNT(*) > 100000 ORDER BY l DESC LIMIT 25;
+    void Query28() {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {"Referer"})
+                .Filter(NotEq("Referer", ""))
+                .Project({RegexpReplace("Referer", "^https?://(?:www\\.)?([^/]+)/.*$", "\\1", "k"),
+                          Length("Referer", "length_ref")})
+                .Aggregate({"k"},
+                           {Avg("length_ref", "l"), Count("*", "c"), Min("Referer", "min_ref")})
+                .Filter(Greater<int64_t>("c", 100000))
+                .OrderBy({{"l", true}}, 25)
+                .Collect();
+
+        df.Display();
+    }
+
+    // WARNING: DataFrame::Display output does not affect that query
+    // SELECT SUM(ResolutionWidth), SUM(ResolutionWidth + 1), SUM(ResolutionWidth + 2),
+    // SUM(ResolutionWidth + 3), SUM(ResolutionWidth + 4), SUM(ResolutionWidth + 5),
+    // SUM(ResolutionWidth + 6), SUM(ResolutionWidth + 7), SUM(ResolutionWidth + 8),
+    // SUM(ResolutionWidth + 9), SUM(ResolutionWidth + 10), SUM(ResolutionWidth + 11),
+    // SUM(ResolutionWidth + 12), SUM(ResolutionWidth + 13), SUM(ResolutionWidth + 14),
+    // SUM(ResolutionWidth + 15), SUM(ResolutionWidth + 16), SUM(ResolutionWidth + 17),
+    // SUM(ResolutionWidth + 18), SUM(ResolutionWidth + 19), SUM(ResolutionWidth + 20),
+    // SUM(ResolutionWidth + 21), SUM(ResolutionWidth + 22), SUM(ResolutionWidth + 23),
+    // SUM(ResolutionWidth + 24), SUM(ResolutionWidth + 25), SUM(ResolutionWidth + 26),
+    // SUM(ResolutionWidth + 27), SUM(ResolutionWidth + 28), SUM(ResolutionWidth + 29),
+    // SUM(ResolutionWidth + 30), SUM(ResolutionWidth + 31), SUM(ResolutionWidth + 32),
+    // SUM(ResolutionWidth + 33), SUM(ResolutionWidth + 34), SUM(ResolutionWidth + 35),
+    // SUM(ResolutionWidth + 36), SUM(ResolutionWidth + 37), SUM(ResolutionWidth + 38),
+    // SUM(ResolutionWidth + 39), SUM(ResolutionWidth + 40), SUM(ResolutionWidth + 41),
+    // SUM(ResolutionWidth + 42), SUM(ResolutionWidth + 43), SUM(ResolutionWidth + 44),
+    // SUM(ResolutionWidth + 45), SUM(ResolutionWidth + 46), SUM(ResolutionWidth + 47),
+    // SUM(ResolutionWidth + 48), SUM(ResolutionWidth + 49), SUM(ResolutionWidth + 50),
+    // SUM(ResolutionWidth + 51), SUM(ResolutionWidth + 52), SUM(ResolutionWidth + 53),
+    // SUM(ResolutionWidth + 54), SUM(ResolutionWidth + 55), SUM(ResolutionWidth + 56),
+    // SUM(ResolutionWidth + 57), SUM(ResolutionWidth + 58), SUM(ResolutionWidth + 59),
+    // SUM(ResolutionWidth + 60), SUM(ResolutionWidth + 61), SUM(ResolutionWidth + 62),
+    // SUM(ResolutionWidth + 63), SUM(ResolutionWidth + 64), SUM(ResolutionWidth + 65),
+    // SUM(ResolutionWidth + 66), SUM(ResolutionWidth + 67), SUM(ResolutionWidth + 68),
+    // SUM(ResolutionWidth + 69), SUM(ResolutionWidth + 70), SUM(ResolutionWidth + 71),
+    // SUM(ResolutionWidth + 72), SUM(ResolutionWidth + 73), SUM(ResolutionWidth + 74),
+    // SUM(ResolutionWidth + 75), SUM(ResolutionWidth + 76), SUM(ResolutionWidth + 77),
+    // SUM(ResolutionWidth + 78), SUM(ResolutionWidth + 79), SUM(ResolutionWidth + 80),
+    // SUM(ResolutionWidth + 81), SUM(ResolutionWidth + 82), SUM(ResolutionWidth + 83),
+    // SUM(ResolutionWidth + 84), SUM(ResolutionWidth + 85), SUM(ResolutionWidth + 86),
+    // SUM(ResolutionWidth + 87), SUM(ResolutionWidth + 88), SUM(ResolutionWidth + 89) FROM hits;
+    void Query29() {
+        auto df = DataFrame::Select(columnar_file_path_, {"ResolutionWidth"})
+                      .Aggregate({}, {Sum("ResolutionWidth", "a"), Count("*", "b")})
+                      .Collect();
+
+        std::shared_ptr<Column> cnt = df.GetResult("b");
+        std::shared_ptr<Column> sum = df.GetResult("a");
+
+        const auto* cnt_vec = static_cast<const std::vector<int64_t>*>(cnt->GetRawData());
+        int64_t delta = (*cnt_vec)[0];
+
+        int64_t cur = 0;
+        const auto* sum_vec = static_cast<const std::vector<int32_t>*>(sum->GetRawData());
+        cur = (*sum_vec)[0];
+
+        for (size_t i = 0; i < 90; ++i) {
+            std::cout << cur << ",";
+            cur += delta;
+        }
+        std::cout << "\n";
+    }
+
+    // SELECT SearchEngineID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM
+    // hits WHERE SearchPhrase <> '' GROUP BY SearchEngineID, ClientIP ORDER BY c DESC LIMIT 10;
+    void Query30() {
+        auto df = DataFrame::Select(columnar_file_path_,
+                                    {"SearchEngineID", "ClientIP", "IsRefresh", "ResolutionWidth"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Aggregate({"SearchEngineID", "ClientIP"},
+                                 {Count("*", "c"), Sum("IsRefresh", "sum_refresh"),
+                                  Avg("ResolutionWidth", "avg_res_width")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits WHERE
+    // SearchPhrase <> '' GROUP BY WatchID, ClientIP ORDER BY c DESC LIMIT 10;
+    void Query31() {
+        auto df = DataFrame::Select(columnar_file_path_,
+                                    {"WatchID", "ClientIP", "IsRefresh", "ResolutionWidth"})
+                      .Filter(NotEq("SearchPhrase", ""))
+                      .Aggregate({"WatchID", "ClientIP"},
+                                 {Count("*", "c"), Sum("IsRefresh", "sum_refresh"),
+                                  Avg("ResolutionWidth", "avg_res_width")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT WatchID, ClientIP, COUNT(*) AS c, SUM(IsRefresh), AVG(ResolutionWidth) FROM hits GROUP
+    // BY WatchID, ClientIP ORDER BY c DESC LIMIT 10;
+    void Query32() {
+        auto df = DataFrame::Select(columnar_file_path_,
+                                    {"WatchID", "ClientIP", "IsRefresh", "ResolutionWidth"})
+                      .Aggregate({"WatchID", "ClientIP"},
+                                 {Count("*", "c"), Sum("IsRefresh", "sum_refresh"),
+                                  Avg("ResolutionWidth", "avg_res_width")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT URL, COUNT(*) AS c FROM hits GROUP BY URL ORDER BY c DESC LIMIT 10;
+    void Query33() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Aggregate({"URL"}, {Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT 1, URL, COUNT(*) AS c FROM hits GROUP BY 1, URL ORDER BY c DESC LIMIT 10;
+    void Query34() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Aggregate({"URL"}, {Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Project({Literal<int16_t>("const_1", 1)})
+                      .Reorder({"const_1", "URL", "c"})
+                      .Collect();
+        df.Display();
+    }
+
+    // SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c FROM hits GROUP BY
+    // ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 ORDER BY c DESC LIMIT 10;
+    void Query35() {
+        auto df = DataFrame::Select(columnar_file_path_, {"ClientIP"})
+                      .Aggregate({"ClientIP"}, {Count("*", "c")})
+                      .OrderBy({{"c", true}}, 10)
+                      .Project({AddConst<int32_t>("ClientIP", -1, "ClientIP_minus_1"),
+                                AddConst<int32_t>("ClientIP", -2, "ClientIP_minus_2"),
+                                AddConst<int32_t>("ClientIP", -3, "ClientIP_minus_3")})
+                      .Reorder({"ClientIP", "ClientIP_minus_1", "ClientIP_minus_2",
+                                "ClientIP_minus_3", "c"})
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >=
+    // '2013-07-01' AND EventDate <= '2013-07-31' AND DontCountHits = 0 AND IsRefresh = 0 AND URL <>
+    // '' GROUP BY URL ORDER BY PageViews DESC LIMIT 10;
+    void Query36() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Filter(NotEq("URL", ""))
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("DontCountHits", 0))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Aggregate({"URL"}, {Count("*", "PageViews")})
+                      .OrderBy({{"PageViews", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT Title, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >=
+    // '2013-07-01' AND EventDate <= '2013-07-31' AND DontCountHits = 0 AND IsRefresh = 0 AND Title
+    // <> '' GROUP BY Title ORDER BY PageViews DESC LIMIT 10;
+    void Query37() {
+        auto df = DataFrame::Select(columnar_file_path_, {"Title"})
+                      .Filter(NotEq("Title", ""))
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("DontCountHits", 0))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Aggregate({"Title"}, {Count("*", "PageViews")})
+                      .OrderBy({{"PageViews", true}}, 10)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT URL, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate >=
+    // '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND IsLink <> 0 AND IsDownload =
+    // 0 GROUP BY URL ORDER BY PageViews DESC LIMIT 10 OFFSET 1000;
+    void Query38() {
+        auto df = DataFrame::Select(columnar_file_path_, {"URL"})
+                      .Filter(NotEq<int16_t>("IsLink", 0))
+                      .Filter(Eq<int16_t>("IsDownload", 0))
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Aggregate({"URL"}, {Count("*", "PageViews")})
+                      .OrderBy({{"PageViews", true}}, 10, 1000)
+                      .Collect();
+
+        df.Display();
+    }
+
+    // SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND
+    // AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL AS Dst, COUNT(*) AS PageViews FROM hits
+    // WHERE CounterID = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND
+    // IsRefresh = 0 GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst ORDER BY
+    // PageViews DESC LIMIT 10 OFFSET 1000;
+    void Query39() {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {})
+                .Filter(Eq<int32_t>("CounterID", 62))
+                .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                .Filter(Eq<int16_t>("IsRefresh", 0))
+                .Project({CaseWhen<std::string>(
+                    "Src", And(Eq<int16_t>("SearchEngineID", 0), Eq<int16_t>("AdvEngineID", 0)),
+                    ColRef("Referer"), Literal<std::string>("dummy_name", ""), ColumnType::STRING)})
+                .Aggregate({"TraficSourceID", "SearchEngineID", "AdvEngineID", "Src", "URL"},
+                           {Count("*", "PageViews")})
+                .OrderBy({{"PageViews", true}}, 10, 1000)
+                .Collect();
+
+        df.Display();
+    }
+
+    // SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventDate
+    // >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6)
+    // AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC
+    // LIMIT 10 OFFSET 100;
+    void Query40() const {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {"Title"})
+                .Filter(Eq<int64_t>("RefererHash", 3594120000172545465))
+                .Filter(Eq<int32_t>("CounterID", 62))
+                .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                .Filter(Eq<int16_t>("IsRefresh", 0))
+                .Filter(Or(Eq<int16_t>("TraficSourceID", -1), Eq<int16_t>("TraficSourceID", 6)))
+                .Aggregate({"URLHash", "EventDate"}, {Count("*", "PageViews")})
+                .OrderBy({{"PageViews", true}}, 10, 100)
+                .Collect();
+        df.Display();
+    }
+
+    // SELECT WindowClientWidth, WindowClientHeight, COUNT(*) AS PageViews FROM hits WHERE CounterID
+    // = 62 AND EventDate >= '2013-07-01' AND EventDate <= '2013-07-31' AND IsRefresh = 0 AND
+    // DontCountHits = 0 AND URLHash = 2868770270353813622 GROUP BY WindowClientWidth,
+    // WindowClientHeight ORDER BY PageViews DESC LIMIT 10 OFFSET 10000;
+    void Query41() const {
+        auto df =
+            DataFrame::Select(columnar_file_path_, {})
+                .Filter(Eq<int64_t>("URLHash", 2868770270353813622))
+                .Filter(Eq<int32_t>("CounterID", 62))
+                .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                .Filter(Eq<int16_t>("IsRefresh", 0))
+                .Filter(Eq<int16_t>("DontCountHits", 0))
+                .Aggregate({"WindowClientWidth", "WindowClientHeight"}, {Count("*", "PageViews")})
+                .OrderBy({{"PageViews", true}}, 10, 10000)
+                .Collect();
+
+        df.Display();
+    }
+
+    // SELECT DATE_TRUNC('minute', EventTime) AS M, COUNT(*) AS PageViews FROM hits WHERE CounterID
+    // = 62 AND EventDate >= '2013-07-14' AND EventDate <= '2013-07-15' AND IsRefresh = 0 AND
+    // DontCountHits = 0 GROUP BY DATE_TRUNC('minute', EventTime) ORDER BY DATE_TRUNC('minute',
+    // EventTime) LIMIT 10 OFFSET 1000;
+    void Query42() const {
+        auto df = DataFrame::Select(columnar_file_path_, {})
+                      .Filter(Eq<int32_t>("CounterID", 62))
+                      .Filter(GreaterEq<int32_t>("EventDate", Date::Parse("2013-07-01")))
+                      .Filter(LessEq<int32_t>("EventDate", Date::Parse("2013-07-31")))
+                      .Filter(Eq<int16_t>("IsRefresh", 0))
+                      .Filter(Eq<int16_t>("DontCountHits", 0))
+                      .Project({TimeTrunc("EventTime", "minute", "M")})
+                      .Aggregate({"M"}, {Count("*", "PageViews")})
+                      .OrderBy({{"M", false}}, 10, 1000)
+                      .Collect();
+
+        df.Display();
+    }
+
     void RunQuery(int query_number) {
         switch (query_number) {
             case 0: Query00(); break;
@@ -254,12 +602,31 @@ public:
             case 15: Query15(); break;
             case 16: Query16(); break;
             case 17: Query17(); break;
-            // TODO: 18
+            case 18: Query18(); break;
             case 19: Query19(); break;
-            // TODO: 20-23
+            case 20: Query20(); break;
+            case 21: Query21(); break;
+            case 22: Query22(); break;
+            case 23: Query23(); break;
             case 24: Query24(); break;
             case 25: Query25(); break;
             case 26: Query26(); break;
+            case 27: Query27(); break;
+            case 28: Query28(); break;
+            case 29: Query29(); break;
+            case 30: Query30(); break;
+            case 31: Query31(); break;
+            case 32: Query32(); break;
+            case 33: Query33(); break;
+            case 34: Query34(); break;
+            case 35: Query35(); break;
+            case 36: Query36(); break;
+            case 37: Query37(); break;
+            case 38: Query38(); break;
+            case 39: Query39(); break;
+            case 40: Query40(); break;
+            case 41: Query41(); break;
+            case 42: Query42(); break;
 
             default: THROW_RUNTIME_ERROR("Unknown query number: " + std::to_string(query_number));
         }
@@ -288,8 +655,7 @@ int main(int argc, char** argv) {
         try {
             std::cerr << "Converting CSV to columnar format...\n";
             const auto start = std::chrono::steady_clock::now();
-            CSVToColumnar converter;
-            converter.ConvertWithSchema(argv[2], argv[3], argv[4]);
+            CsvToColumnar::ConvertWithSchema(argv[2], argv[3], argv[4]);
             const auto time =
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() *
                 1000;

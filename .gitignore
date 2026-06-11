@@ -18,16 +18,17 @@ compile_commands.json
 .clangd
 test_csv
 test.csv
+test.log
 test_csv2
 test_main.cpp
 hits_sample.csv
+hits_10m.csv
 columnar_hits_sample.tuff
 report.txt
 docker-test
 docker-test-results
 .vscode/
 src/project_bundle.txt
-
 
 # Prerequisites
 *.d
