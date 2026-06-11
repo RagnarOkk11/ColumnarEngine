@@ -171,11 +171,11 @@ public:
         ViewType true_view = build_view(true_branch_);
         ViewType false_view = build_view(false_branch_);
 
-        auto builder = ColumnFactory::MakeColumnBuilder(type_);
+        std::shared_ptr<ColumnBuilder> builder = ColumnFactory::MakeColumnBuilder(type_);
         auto* typed_builder = static_cast<BuilderType*>(builder.get());
 
         std::visit(
-            [&](const auto& true_v, const auto& false_v) {
+            [&](const ViewType& true_v, const ViewType& false_v) {
                 size_t physical_size =
                     batch.columns.empty() ? batch.num_rows : batch.columns[0]->Size();
                 size_t cur_ind = 0;
